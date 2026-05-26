@@ -124,40 +124,49 @@ static const Face d12_faces[12] = {
 
 /* --- D10: pentagonal trapezohedron ------------------------------------- */
 
-/* Belt geometry: vertices on a unit circumsphere with
- *   z_belt = ±1/sqrt(5) * 4096 ≈ ±1832
- *   r_belt =  2/sqrt(5) * 4096 ≈  3663
+/* The 10 kite faces are coplanar only when the belt offset z_belt is
+ * chosen specifically — taking the apex at (0,0,h), one upper belt
+ * vertex at (r, 0, z) and the kite's "tail" lower-belt vertex at angle
+ * 36° (= midpoint between two upper-belt verts), planarity solves to:
  *
- * Upper belt sits at z = +1832 at angles 0, 72, 144, 216, 288°.
- * Lower belt sits at z = -1832 at angles 36, 108, 180, 252, 324°.
+ *     z_belt = h * (2 - phi) / (2 + phi) ≈ h * 0.1056
+ *     r      = sqrt(h² - z_belt²)
  *
- * Precomputed cos/sin (× 3663):
- *   cos 0°    =  3663, sin 0°    =     0
- *   cos 72°   =  1132, sin 72°   =  3484
- *   cos 144°  = -2963, sin 144°  =  2153
- *   cos 216°  = -2963, sin 216°  = -2153
- *   cos 288°  =  1132, sin 288°  = -3484
- *   cos 36°   =  2963, sin 36°   =  2153
- *   cos 108°  = -1132, sin 108°  =  3484
- *   cos 180°  = -3663, sin 180°  =     0
- *   cos 252°  = -1132, sin 252°  = -3484
- *   cos 324°  =  2963, sin 324°  = -2153
+ * With apex h = 4096 (unit circumsphere) this gives z_belt = 432 and
+ * r = 4073. The polyhedron's overall bounding box is roughly cubical;
+ * the kite faces themselves have apex-to-tail ~1.27× the wing-to-wing
+ * width, which matches the look of a real RPG D10.
+ *
+ * Upper belt at z = +432, angles 0/72/144/216/288°.
+ * Lower belt at z = -432, angles 36/108/180/252/324°.
+ *
+ * Precomputed cos/sin × 4073:
+ *   cos 0°    =  4073, sin 0°    =     0
+ *   cos 72°   =  1259, sin 72°   =  3873
+ *   cos 144°  = -3295, sin 144°  =  2395
+ *   cos 216°  = -3295, sin 216°  = -2395
+ *   cos 288°  =  1259, sin 288°  = -3873
+ *   cos 36°   =  3295, sin 36°   =  2395
+ *   cos 108°  = -1259, sin 108°  =  3873
+ *   cos 180°  = -4073, sin 180°  =     0
+ *   cos 252°  = -1259, sin 252°  = -3873
+ *   cos 324°  =  3295, sin 324°  = -2395
  */
 static const Vec3 d10_verts[12] = {
   {    0,     0,  4096}, /*  0: top apex    */
   {    0,     0, -4096}, /*  1: bottom apex */
-  /* upper belt (z = +1832), angles 0/72/144/216/288 */
-  { 3663,     0,  1832}, /*  2: upper[0] */
-  { 1132,  3484,  1832}, /*  3: upper[1] */
-  {-2963,  2153,  1832}, /*  4: upper[2] */
-  {-2963, -2153,  1832}, /*  5: upper[3] */
-  { 1132, -3484,  1832}, /*  6: upper[4] */
-  /* lower belt (z = -1832), angles 36/108/180/252/324 */
-  { 2963,  2153, -1832}, /*  7: lower[0] */
-  {-1132,  3484, -1832}, /*  8: lower[1] */
-  {-3663,     0, -1832}, /*  9: lower[2] */
-  {-1132, -3484, -1832}, /* 10: lower[3] */
-  { 2963, -2153, -1832}, /* 11: lower[4] */
+  /* upper belt (z = +432), angles 0/72/144/216/288 */
+  { 4073,     0,   432}, /*  2: upper[0] */
+  { 1259,  3873,   432}, /*  3: upper[1] */
+  {-3295,  2395,   432}, /*  4: upper[2] */
+  {-3295, -2395,   432}, /*  5: upper[3] */
+  { 1259, -3873,   432}, /*  6: upper[4] */
+  /* lower belt (z = -432), angles 36/108/180/252/324 */
+  { 3295,  2395,  -432}, /*  7: lower[0] */
+  {-1259,  3873,  -432}, /*  8: lower[1] */
+  {-4073,     0,  -432}, /*  9: lower[2] */
+  {-1259, -3873,  -432}, /* 10: lower[3] */
+  { 3295, -2395,  -432}, /* 11: lower[4] */
 };
 
 /* 10 kite faces. Top kite i has corners (top_apex, upper[i], lower[i],
@@ -270,13 +279,18 @@ void dice3d_draw(GContext *ctx, const Die *die) {
   /* Walk faces: cull back-facing via real face normal, shade by n·light,
    * draw filled + outlined, and track the front-most face for the numeral.
    *
-   * CULL_SLIVER skips faces tilted nearly 90° from the camera — their
-   * projected polygons are degenerate and only the outline strokes
-   * survive, producing the thin-line artifacts seen earlier. */
-  #define CULL_SLIVER 500000   /* roughly cos(86°) of |n| for our scale */
+   * Sliver suppression: an nz threshold can't distinguish "thin
+   * protrusion at a polyhedron vertex" from "legitimate face slightly
+   * tilted" — both can sit at ~85° tilt. Instead we cull on absolute
+   * 2D projected area (shoelace formula). The protrusions project to
+   * very small screen areas because they're geometrically tiny;
+   * legitimate tilted faces project to larger areas because the face
+   * is bigger. AREA_DOUBLE_MIN is in 2× pixel² units (we skip the /2
+   * since we only need a threshold). */
+  #define AREA_DOUBLE_MIN 80     /* faces projecting to <40 px² are culled */
 
   int     front_idx = -1;
-  int32_t front_nz  = CULL_SLIVER;
+  int32_t front_nz  = 0;
   GColor  outline   = GColorBlack;
 
   for (int f = 0; f < n_faces; f++) {
@@ -314,7 +328,21 @@ void dice3d_draw(GContext *ctx, const Die *die) {
       nx = -nx; ny = -ny; nz = -nz;
     }
 
-    if (nz <= CULL_SLIVER) continue;
+    /* Backface cull (true camera-facing test). */
+    if (nz <= 0) continue;
+
+    /* Sliver cull: projected 2D area via shoelace. Both winding
+     * directions yield the same |area|, so this is winding-independent. */
+    GPoint face_pts[MAX_FACE_VERTS];
+    for (int k = 0; k < face->n; k++) face_pts[k] = projected[face->v[k]];
+    int32_t area_2x = 0;
+    for (int k = 0; k < face->n; k++) {
+      GPoint a = face_pts[k];
+      GPoint b = face_pts[(k + 1) % face->n];
+      area_2x += (int32_t)a.x * b.y - (int32_t)b.x * a.y;
+    }
+    if (area_2x < 0) area_2x = -area_2x;
+    if (area_2x < AREA_DOUBLE_MIN) continue;
 
     if (nz > front_nz) {
       front_nz  = nz;
@@ -324,9 +352,6 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     int64_t bright = (int64_t)nx * LIGHT_X
                    + (int64_t)ny * LIGHT_Y
                    + (int64_t)nz * LIGHT_Z;
-
-    GPoint face_pts[MAX_FACE_VERTS];
-    for (int k = 0; k < face->n; k++) face_pts[k] = projected[face->v[k]];
 
     GPathInfo info = { face->n, face_pts };
     GPath *path = gpath_create(&info);
