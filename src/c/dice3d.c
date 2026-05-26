@@ -13,14 +13,22 @@
  *   - 3D y is UP; Pebble screen y is DOWN. We negate y on projection.
  *   - 3D z is OUT of the screen toward the viewer.
  *
- * Culling:
- *   - The polyhedra are regular and centered at the origin, so each
- *     face's outward-normal direction passes through its 3D centroid.
- *     "Face faces the camera" is therefore exactly "centroid.z > 0",
- *     with no dependence on vertex winding order in the face table.
- *     This is more robust than 2D signed-area culling, which is
- *     sensitive to per-face winding inconsistencies in hand-built
- *     polyhedron tables.
+ * Culling and shading:
+ *   - We compute the actual face plane normal via cross product of the
+ *     first two edges. For D12 (regular dodecahedron), this matches the
+ *     centroid direction, but for the D10 trapezohedron the kite faces
+ *     are NOT symmetric around the polyhedron center — their centroids
+ *     don't lie on the outward-normal axis — so centroid.z can disagree
+ *     in sign with the actual normal.z. Using the real normal handles
+ *     both polyhedra uniformly.
+ *   - The cross-product normal's direction depends on vertex winding.
+ *     We correct it by computing the dot product with the face centroid
+ *     (which is guaranteed to be on the same side of origin as the
+ *     outward direction, because the polyhedron is convex and centered
+ *     at origin). If the dot is negative, the cross is pointing inward
+ *     and we flip its sign.
+ *   - After correction, n.z > 0 ⇔ face faces camera, and n · light is
+ *     the lighting term.
  *
  * Winding (within faces):
  *   - Vertex order inside each face is whatever the table gives us.
@@ -211,20 +219,21 @@ static GPoint project(Vec3 v, GPoint center, int16_t radius) {
 /* Light direction: upper-left, slightly toward camera. (-0.6, 0.6, 0.5)
  * in our fixed-point scale (4096 = 1.0). Pebble screen has y-down, but
  * dice3d works in 3D-y-up space and flips on projection, so a face whose
- * (cx, cy, cz) leans (-x, +y, +z) is the one pointing at the light. */
+ * outward normal leans (-x, +y, +z) is the one pointing at the light. */
 #define LIGHT_X (-2458)
 #define LIGHT_Y  (2458)
 #define LIGHT_Z  (2048)
 
-/* Shading is centroid · light. Front-facing faces have already been
- * filtered by backface cull, so cz tends positive; bright/dark variation
- * comes from how much the face's x/y also align with the light. */
-static GColor shade_for_centroid(int32_t cx, int32_t cy, int32_t cz) {
-  int32_t bright = (cx * LIGHT_X + cy * LIGHT_Y + cz * LIGHT_Z) / 4096;
+/* Shading is n · light with n the un-normalized face normal. All faces
+ * of a given polyhedron are congruent (regular pentagons for D12,
+ * congruent kites for D10), so |n| is constant per polyhedron and we
+ * can threshold the dot product directly. Thresholds are wide enough
+ * to land sensibly for both polyhedra without per-type tuning. */
+static GColor shade_for_normal(int64_t bright) {
 #if defined(PBL_COLOR)
-  if (bright >  1500) return GColorWhite;
-  if (bright >     0) return GColorLightGray;
-  if (bright > -1500) return GColorWindsorTan;
+  if (bright >  20000000000LL) return GColorWhite;
+  if (bright >              0) return GColorLightGray;
+  if (bright > -20000000000LL) return GColorWindsorTan;
   return GColorBulgarianRose;
 #else
   return (bright > 0) ? GColorWhite : GColorLightGray;
@@ -258,19 +267,25 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     projected  [i] = project(transformed[i], die->center, die->radius);
   }
 
-  /* Walk faces: cull back-facing (centroid.z <= 0), shade by centroid·light,
-   * draw filled + outlined, and track the front-most face for the numeral. */
+  /* Walk faces: cull back-facing via real face normal, shade by n·light,
+   * draw filled + outlined, and track the front-most face for the numeral.
+   *
+   * CULL_SLIVER skips faces tilted nearly 90° from the camera — their
+   * projected polygons are degenerate and only the outline strokes
+   * survive, producing the thin-line artifacts seen earlier. */
+  #define CULL_SLIVER 500000   /* roughly cos(86°) of |n| for our scale */
+
   int     front_idx = -1;
-  int32_t front_z   = 0;       /* anything with cz > 0 wins on first pass */
+  int32_t front_nz  = CULL_SLIVER;
   GColor  outline   = GColorBlack;
 
   for (int f = 0; f < n_faces; f++) {
     const Face *face = &faces[f];
 
-    /* 3D centroid of transformed vertices. For a regular polyhedron
-     * centered at origin, this lies on the face's outward-normal axis,
-     * so cz > 0 is equivalent to "face is on the camera-facing
-     * hemisphere" — winding-independent. */
+    /* 3D centroid — used to ensure the cross-product normal points
+     * outward, since the centroid is always on the same side of origin
+     * as the outward-facing direction for a convex polyhedron centered
+     * at origin. */
     int32_t cx = 0, cy = 0, cz = 0;
     for (int k = 0; k < face->n; k++) {
       cx += transformed[face->v[k]].x;
@@ -281,19 +296,41 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     cy /= face->n;
     cz /= face->n;
 
-    if (cz <= 0) continue;     /* back-facing — cull */
+    /* Face plane normal: cross product of two edges sharing vertex v[0]. */
+    int32_t e1x = transformed[face->v[1]].x - transformed[face->v[0]].x;
+    int32_t e1y = transformed[face->v[1]].y - transformed[face->v[0]].y;
+    int32_t e1z = transformed[face->v[1]].z - transformed[face->v[0]].z;
+    int32_t e2x = transformed[face->v[2]].x - transformed[face->v[0]].x;
+    int32_t e2y = transformed[face->v[2]].y - transformed[face->v[0]].y;
+    int32_t e2z = transformed[face->v[2]].z - transformed[face->v[0]].z;
 
-    if (cz > front_z) {
-      front_z   = cz;
+    int32_t nx = e1y * e2z - e1z * e2y;
+    int32_t ny = e1z * e2x - e1x * e2z;
+    int32_t nz = e1x * e2y - e1y * e2x;
+
+    /* Winding correction: flip if normal points inward. */
+    int64_t outward = (int64_t)nx * cx + (int64_t)ny * cy + (int64_t)nz * cz;
+    if (outward < 0) {
+      nx = -nx; ny = -ny; nz = -nz;
+    }
+
+    if (nz <= CULL_SLIVER) continue;
+
+    if (nz > front_nz) {
+      front_nz  = nz;
       front_idx = f;
     }
+
+    int64_t bright = (int64_t)nx * LIGHT_X
+                   + (int64_t)ny * LIGHT_Y
+                   + (int64_t)nz * LIGHT_Z;
 
     GPoint face_pts[MAX_FACE_VERTS];
     for (int k = 0; k < face->n; k++) face_pts[k] = projected[face->v[k]];
 
     GPathInfo info = { face->n, face_pts };
     GPath *path = gpath_create(&info);
-    graphics_context_set_fill_color(ctx, shade_for_centroid(cx, cy, cz));
+    graphics_context_set_fill_color(ctx, shade_for_normal(bright));
     gpath_draw_filled(ctx, path);
     graphics_context_set_stroke_color(ctx, outline);
     graphics_context_set_stroke_width(ctx, 1);
