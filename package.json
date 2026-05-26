@@ -1,13 +1,13 @@
 {
-  "name": "dnd-dice-watchface",
+  "name": "d20-watchface",
   "author": "",
   "version": "0.1.0",
-  "keywords": ["pebble-app"],
+  "keywords": ["TTRPG", "roleplaying", "fantasy", "RPG"],
   "private": true,
   "dependencies": {},
   "pebble": {
-    "displayName": "D&D Dice",
-    "uuid": "REPLACE-WITH-uuidgen-OUTPUT",
+    "displayName": "D20 Dice",
+    "uuid": "72f69112-d354-4317-a734-617e4c48512f",
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": ["emery"],
