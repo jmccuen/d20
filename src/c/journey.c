@@ -100,10 +100,17 @@ void journey_draw(GContext *ctx, GRect bounds,
   draw_chest(ctx, GPoint(x0 + span / 2, y));
   draw_boss (ctx, GPoint(x1,            y));
 
-  /* Token position. During sleep it always sits at camp. */
+  /* Token position.
+   *  - Sleep mode: always at camp (the adventurer is resting).
+   *  - Steps unavailable / zero so far today: nudged a few px off-camp so
+   *    the token doesn't look stuck on the trailhead before HealthService
+   *    has reported anything.
+   *  - Otherwise: position scales with steps / goal, clamped to the trail. */
   int16_t tx;
-  if (sleeping || steps <= 0 || goal <= 0) {
+  if (sleeping) {
     tx = x0;
+  } else if (steps <= 0 || goal <= 0) {
+    tx = x0 + 4;
   } else {
     int32_t clamped = (steps < goal) ? steps : goal;
     tx = x0 + (int16_t)(span * clamped / goal);

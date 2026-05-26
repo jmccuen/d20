@@ -92,6 +92,14 @@ void face_init(Window *window) {
   s_state.battery_pct = 100;
   s_state.bluetooth   = true;
 
+  /* Vertical layout, 228 px total:
+   *   0   – 28   ribbon         (28 px)
+   *   28  – 118  hour die area  (90 px, r=45)
+   *   118 – 166  minute dice    (48 px, r=24)
+   *   166 – 198  stat row       (32 px — heart with BPM, torch with %)
+   *   198 – 228  journey strip  (30 px)
+   * Sections butt up against each other without overlap. */
+
   /* Date ribbon along the top. */
   s_ribbon_layer = layer_create(GRect(0, 0, bounds.size.w, 28));
   layer_set_update_proc(s_ribbon_layer, ribbon_update);
@@ -99,7 +107,7 @@ void face_init(Window *window) {
 
   /* Hour die — large, centered upper area. */
   const int16_t hour_r = 45;
-  s_hour_layer = layer_create(GRect(bounds.size.w / 2 - hour_r, 36,
+  s_hour_layer = layer_create(GRect(bounds.size.w / 2 - hour_r, 28,
                                      hour_r * 2, hour_r * 2));
   s_hour_die = (Die){
     .center = GPoint(hour_r, hour_r),
@@ -112,10 +120,10 @@ void face_init(Window *window) {
   layer_add_child(root, s_hour_layer);
 
   /* Minute dice — two side by side below the hour. */
-  const int16_t min_r = 26;
+  const int16_t min_r = 24;
   int16_t tens_x = bounds.size.w * 30 / 100 - min_r;
   int16_t ones_x = bounds.size.w * 70 / 100 - min_r;
-  int16_t min_y  = 132;
+  int16_t min_y  = 118;
 
   s_tens_layer = layer_create(GRect(tens_x, min_y, min_r * 2, min_r * 2));
   s_tens_die = (Die){
@@ -139,9 +147,8 @@ void face_init(Window *window) {
   layer_set_update_proc(s_ones_layer, ones_die_update);
   layer_add_child(root, s_ones_layer);
 
-  /* Stats row (HP + torch). */
-  s_stats_layer = layer_create(GRect(0, bounds.size.h - 64,
-                                      bounds.size.w, 32));
+  /* Stats row — heart with BPM inside, torch with percent below. */
+  s_stats_layer = layer_create(GRect(0, 166, bounds.size.w, 32));
   layer_set_update_proc(s_stats_layer, stats_update);
   layer_add_child(root, s_stats_layer);
 
