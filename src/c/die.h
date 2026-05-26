@@ -25,6 +25,7 @@ typedef struct {
   int16_t  value;      /* the face currently displayed */
   int32_t  rotation;   /* 0..TRIG_MAX_ANGLE */
   DieType  type;
+  bool     flash;      /* one-frame palette swap on tumble settle */
 } Die;
 
 void die_draw(GContext *ctx, const Die *die);

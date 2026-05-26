@@ -3,12 +3,27 @@
  *
  * Contains the campfire (trailhead, also doubles as sleep marker), midpoint
  * treasure, end-of-trail boss sigil, and the moving adventurer token whose
- * position is steps/goal of the trail length.
+ * position is steps/goal along the trail.
+ *
+ * Phase 2 adds:
+ *   - Smooth token slide between step updates (no more teleport).
+ *   - Walk-to-camp / depart-camp slides on sleep state transitions.
+ *   - A "Xh Ym rest" label under the camp for ~2 h after waking.
+ *
+ * journey.c owns a single module-scope state struct. face.c calls
+ * journey_init() once, journey_set_*() when inputs change, and
+ * journey_draw() from the layer update_proc.
  */
 
 #pragma once
 
 #include <pebble.h>
 
-void journey_draw(GContext *ctx, GRect bounds,
-                  int32_t steps, int32_t goal, bool sleeping);
+void journey_init(Layer *layer, int32_t step_goal);
+void journey_deinit(void);
+
+void journey_set_steps(int32_t steps);
+void journey_set_goal(int32_t goal);
+void journey_set_sleeping(bool sleeping);
+
+void journey_draw(GContext *ctx, GRect bounds);

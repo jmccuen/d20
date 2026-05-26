@@ -6,15 +6,10 @@ A Pebble Time 2 watchface where the time is displayed via animated polyhedral di
 
 ## Status
 
-**Phase 1 code is complete; manual emulator state-testing is the remaining gate to closing Phase 1.** Code changes since Phase 0:
+**Phase 1 visually verified in emulator (`Phase1.png`). Phase 2 animation code is in; manual emulator testing remains to close Phase 2.** Code state:
 
-- Vertical layout reworked so ribbon, hour die, minute dice, stat row, and journey strip occupy non-overlapping bands (28 / 90 / 48 / 32 / 30 px)
-- Hour die has 3 centroid-to-vertex facet spokes; minute kites have a midline + 2 diagonal facets
-- Heart resized so a 3-digit BPM fits inside it; BPM number is drawn inside the heart in white; em-dash replaces "0" when no HR reading is available; "HP" suffix removed
-- Torch has 4 visually distinct battery states (full flame + core highlight, half flame, ember cluster, single faint ember at the wick); percent label stacks beneath the torch
-- Ribbon is a 6-vertex tapered-scroll polygon with fold-crease accents at each end
-- Familiar placeholder is a visible silhouette (circle + eye) when Bluetooth is connected; faded windsor-tan outline when disconnected
-- Adventurer token nudges 4 px off-camp when `steps <= 0` so it doesn't read as stuck on the trailhead
+- **Phase 1 changes:** Vertical layout reworked into five non-overlapping bands (28 / 90 / 48 / 32 / 30 px); pentagon and kite dice gained facet hints; heart enlarged to host the BPM number internally with em-dash for no-data; torch has 4 distinct battery states with percent stacked below; ribbon is a tapered-scroll polygon with fold-crease accents; familiar has a visible silhouette + faded variant; token nudges off-camp when `steps <= 0`.
+- **Phase 2 changes:** New `tumble.h/.c` module owns per-die Pebble Animations. Hour change triggers a ~400 ms re-roll; minute tens/ones changes trigger ~100 ms settle shakes; taps trigger a ~600 ms ceremonial roll across all three dice using a once-per-gesture wall-clock snapshot (time-sampling rule). Dice flash a brighter palette on settle. `journey.c` rewritten to own a slide animation that smoothly walks the token to camp on sleep, away from camp on wake, and between step-count updates the rest of the time; a "Xh Ym rest" label renders under the camp for 2 h after waking. A `s_warm` gate suppresses animations during the initial state push so the dice snap to their first values without a roll.
 
 **Decisions folded into this plan from recent brief revisions:**
 - Dice render as flat-shaded 2D sprites with rotation that *read* as 3D (BG3-style aesthetic; not literal 3D rendering)
@@ -125,7 +120,7 @@ Refine the procedural rendering until the watchface reads as intentional design 
 
 ### Phase 2 — Animation
 
-Polish-first means the static face is trusted before motion gets added. Animation lives in a new `tumble.h/.c` module.
+Polish-first means the static face is trusted before motion gets added. Animation lives in `tumble.h/.c` for dice; `journey.c` owns its own slide animation.
 
 **Animation triggers**
 
@@ -141,14 +136,25 @@ Polish-first means the static face is trusted before motion gets added. Animatio
 Rationale: full ceremonial rolls are reserved for moments where the user is actually looking (wrist-raise, tap) or has a thematic reason (hour change). Minute changes get a settle-shake — enough to read as "the dice just settled to this number" without burning the battery on 1,440 daily animations.
 
 **Tumble implementation**
-- [ ] Rotation + face-value flicker every 2–3 frames + ease-out settle
-- [ ] Flash highlight on settle (one-frame palette swap of the die fill)
-- [ ] Time-sampling rule: sample wall clock at roll-start, animate for fixed duration, snap to the sampled time on settle
+- [x] Rotation + face-value flicker (6 segments full / 4 quick) + ease-out settle (`tumble.c:tumble_update`)
+- [x] Flash highlight on settle — `GColorIcterine` palette swap during the final segment (`die.c:draw_pentagon/kite`)
+- [x] Time-sampling rule — `face_on_tap` snapshots the wall clock once, then settles all three dice on that snapshot
+- [x] Hour-change → `TUMBLE_QUICK`, minute tens/ones → `TUMBLE_SHAKE` (`face.c:face_on_tick`)
+- [x] Tap → `TUMBLE_FULL` across all three dice (`face.c:face_on_tap`)
+- [x] `s_warm` gate so the dice snap into their first values without animating on cold start (`face.c`)
 
 **Journey strip animation**
-- [ ] Token slides smoothly between step-count updates (not teleport)
-- [ ] Sleep transition: token "walks to camp" when sleep starts; "departs camp" when waking
-- [ ] Wake label: `Xh Ym rest` fades in under camp for ~2 h after waking
+- [x] Token slides smoothly between step-count updates (`journey.c:journey_set_steps` + `start_slide`)
+- [x] Sleep transition: token slides to camp on `journey_set_sleeping(true)`; slides back to step-position on wake (longer `SLIDE_SLEEP_MS` curve, ease-in-out)
+- [x] Wake label: `Xh Ym rest` renders under camp for 2 h after waking, derived from `(sleep_started_at, sleep_ended_at)` (`journey.c:draw_rest_label`)
+
+**Phase 2 manual emulator checklist**
+- [ ] Tap (or simulated tap) triggers a visible 3-dice ceremonial roll that settles on the current time
+- [ ] At XX:00 the hour die re-rolls in place; nothing else animates
+- [ ] On minute change, only the changed die(s) settle-shake briefly
+- [ ] Triggering sleep mode slides the token to camp; ending sleep slides it back
+- [ ] After sleep ends, "Xh Ym rest" label is visible under the camp; gone after 2 h
+- [ ] Cold start: dice show first value with no animation
 
 ### Phase 3 — Stub-sprite pipeline check
 

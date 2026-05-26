@@ -22,6 +22,7 @@
 #include "die.h"
 
 #define COLOR_DIE_BODY    PBL_IF_COLOR_ELSE(GColorLightGray,   GColorWhite)
+#define COLOR_DIE_FLASH   PBL_IF_COLOR_ELSE(GColorIcterine,    GColorWhite)
 #define COLOR_DIE_OUTLINE GColorBlack
 #define COLOR_DIE_INK     GColorBlack
 #define COLOR_DIE_FACET   PBL_IF_COLOR_ELSE(GColorWindsorTan,  GColorDarkGray)
@@ -52,13 +53,14 @@ static void draw_polygon(GContext *ctx, GPoint *pts, int n,
   gpath_destroy(p);
 }
 
-static void draw_pentagon(GContext *ctx, GPoint c, int16_t r, int32_t rot) {
+static void draw_pentagon(GContext *ctx, GPoint c, int16_t r, int32_t rot, bool flash) {
   GPoint pts[5];
   for (int i = 0; i < 5; i++) {
     int32_t a = rot + (TRIG_MAX_ANGLE * i / 5) - (TRIG_MAX_ANGLE / 4);
     pts[i] = rotated_vertex(c, r, a);
   }
-  draw_polygon(ctx, pts, 5, COLOR_DIE_BODY, COLOR_DIE_OUTLINE, HOUR_STROKE);
+  GColor body = flash ? COLOR_DIE_FLASH : COLOR_DIE_BODY;
+  draw_polygon(ctx, pts, 5, body, COLOR_DIE_OUTLINE, HOUR_STROKE);
 
   /* Three interior facet spokes from the centroid to alternate vertices.
    * Pentagon has 5 vertices, so {0, 2, 4} hits three of the five — enough
@@ -70,7 +72,7 @@ static void draw_pentagon(GContext *ctx, GPoint c, int16_t r, int32_t rot) {
   graphics_draw_line(ctx, c, pts[4]);
 }
 
-static void draw_kite(GContext *ctx, GPoint c, int16_t r, int32_t rot) {
+static void draw_kite(GContext *ctx, GPoint c, int16_t r, int32_t rot, bool flash) {
   /* A simple 4-vertex diamond stands in for the prominent face of a d10.
    * The shorter horizontal axis hints at the trapezohedron midline. */
   GPoint pts[4];
@@ -78,7 +80,8 @@ static void draw_kite(GContext *ctx, GPoint c, int16_t r, int32_t rot) {
   pts[1] = rotated_vertex(c, r * 9 / 10,    rot + TRIG_MAX_ANGLE / 4);     /* right  */
   pts[2] = rotated_vertex(c, r,             rot + TRIG_MAX_ANGLE / 2);     /* bottom */
   pts[3] = rotated_vertex(c, r * 9 / 10,    rot + 3 * TRIG_MAX_ANGLE / 4); /* left   */
-  draw_polygon(ctx, pts, 4, COLOR_DIE_BODY, COLOR_DIE_OUTLINE, MIN_STROKE);
+  GColor body = flash ? COLOR_DIE_FLASH : COLOR_DIE_BODY;
+  draw_polygon(ctx, pts, 4, body, COLOR_DIE_OUTLINE, MIN_STROKE);
 
   /* Interior facets: trapezohedron midline (left↔right) plus two angled
    * seams from the top vertex down to the midpoints of the lower edges. */
@@ -113,9 +116,9 @@ static void draw_face_number(GContext *ctx, const Die *die) {
 
 void die_draw(GContext *ctx, const Die *die) {
   if (die->type == DIE_HOUR) {
-    draw_pentagon(ctx, die->center, die->radius, die->rotation);
+    draw_pentagon(ctx, die->center, die->radius, die->rotation, die->flash);
   } else {
-    draw_kite(ctx, die->center, die->radius, die->rotation);
+    draw_kite(ctx, die->center, die->radius, die->rotation, die->flash);
   }
   draw_face_number(ctx, die);
 }

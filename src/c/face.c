@@ -1,18 +1,24 @@
 /*
  * face.c — owns FaceState and the layer tree.
  *
- * The face_on_* functions update FaceState, then mark_dirty only the layers
- * whose underlying data changed. The layer update_procs read from
- * s_state / the static Die instances and dispatch to the module's draw
- * function.
+ * The face_on_* functions update FaceState, then either mark_dirty the
+ * affected layers or hand off to a tumble / journey animation. Layer
+ * update_procs read from s_state and the static Die instances and dispatch
+ * to the module's draw function.
  *
- * Animation triggers (wrist-raise, hour change, etc.) are stubbed in Phase 0
- * and will land in Phase 1.
+ * Phase 2 wires animations:
+ *   - Hour tick  → TUMBLE_QUICK on the hour die
+ *   - Minute tick → TUMBLE_SHAKE on the tens/ones die that changed
+ *   - Tap (wrist-raise placeholder) → TUMBLE_FULL across all three dice,
+ *     with the wall clock sampled once per gesture so the dice always
+ *     settle on a consistent target time.
+ *   - journey.c owns its own slide animations for step/sleep updates.
  */
 
 #include "face.h"
 #include "die.h"
 #include "journey.h"
+#include "tumble.h"
 #include "widgets.h"
 
 /* --- State -------------------------------------------------------------- */
@@ -45,6 +51,15 @@ static Die s_hour_die;
 static Die s_tens_die;
 static Die s_ones_die;
 
+static TumbleHandle s_hour_tumble;
+static TumbleHandle s_tens_tumble;
+static TumbleHandle s_ones_tumble;
+
+/* False during the initial state push from main.c so the dice snap into
+ * their first values without an animation. Flipped to true at the end of
+ * the first face_on_tick so subsequent ticks and taps animate. */
+static bool s_warm;
+
 /* --- Update procs ------------------------------------------------------- */
 
 static void hour_die_update(Layer *layer, GContext *ctx) {
@@ -71,8 +86,7 @@ static void stats_update(Layer *layer, GContext *ctx) {
 }
 
 static void journey_update(Layer *layer, GContext *ctx) {
-  journey_draw(ctx, layer_get_bounds(layer),
-               s_state.steps, s_state.step_goal, s_state.sleeping);
+  journey_draw(ctx, layer_get_bounds(layer));
 }
 
 /* --- Init / deinit ------------------------------------------------------ */
@@ -157,9 +171,19 @@ void face_init(Window *window) {
                                         bounds.size.w, 30));
   layer_set_update_proc(s_journey_layer, journey_update);
   layer_add_child(root, s_journey_layer);
+
+  tumble_init(&s_hour_tumble, &s_hour_die, s_hour_layer);
+  tumble_init(&s_tens_tumble, &s_tens_die, s_tens_layer);
+  tumble_init(&s_ones_tumble, &s_ones_die, s_ones_layer);
+  journey_init(s_journey_layer, s_state.step_goal);
+  s_warm = false;
 }
 
 void face_deinit(void) {
+  journey_deinit();
+  tumble_deinit(&s_ones_tumble);
+  tumble_deinit(&s_tens_tumble);
+  tumble_deinit(&s_hour_tumble);
   layer_destroy(s_journey_layer);
   layer_destroy(s_stats_layer);
   layer_destroy(s_ones_layer);
@@ -180,10 +204,13 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
   int new_minute = tt->tm_min;
 
   if (hour_changed || s_state.hour != new_hour) {
-    s_state.hour     = new_hour;
-    s_hour_die.value = new_hour;
-    /* TODO Phase 1: trigger hour-die re-roll animation. */
-    layer_mark_dirty(s_hour_layer);
+    s_state.hour = new_hour;
+    if (s_warm) {
+      tumble_start(&s_hour_tumble, TUMBLE_QUICK, new_hour);
+    } else {
+      s_hour_die.value = new_hour;
+      layer_mark_dirty(s_hour_layer);
+    }
   }
 
   if (minute_changed || s_state.minute != new_minute) {
@@ -191,14 +218,20 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
     int new_tens = new_minute / 10;
     int new_ones = new_minute % 10;
     if (s_tens_die.value != new_tens) {
-      s_tens_die.value = new_tens;
-      /* TODO Phase 1: settle-shake on the tens die. */
-      layer_mark_dirty(s_tens_layer);
+      if (s_warm) {
+        tumble_start(&s_tens_tumble, TUMBLE_SHAKE, new_tens);
+      } else {
+        s_tens_die.value = new_tens;
+        layer_mark_dirty(s_tens_layer);
+      }
     }
     if (s_ones_die.value != new_ones) {
-      s_ones_die.value = new_ones;
-      /* TODO Phase 1: settle-shake on the ones die. */
-      layer_mark_dirty(s_ones_layer);
+      if (s_warm) {
+        tumble_start(&s_ones_tumble, TUMBLE_SHAKE, new_ones);
+      } else {
+        s_ones_die.value = new_ones;
+        layer_mark_dirty(s_ones_layer);
+      }
     }
   }
 
@@ -208,11 +241,14 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
     layer_mark_dirty(s_ribbon_layer);
   }
 
-  /* Poll steps each minute — cheap. */
+  /* Poll steps each minute — cheap. journey.c will slide the token if the
+   * value actually changed. */
 #if defined(PBL_HEALTH)
   s_state.steps = (int32_t)health_service_sum_today(HealthMetricStepCount);
-  layer_mark_dirty(s_journey_layer);
+  journey_set_steps(s_state.steps);
 #endif
+
+  s_warm = true;
 }
 
 void face_on_battery(BatteryChargeState s) {
@@ -233,12 +269,12 @@ void face_on_health(HealthEventType event) {
       HealthActivityMask mask = health_service_peek_current_activities();
       s_state.sleeping = (mask & HealthActivitySleep) ||
                          (mask & HealthActivityRestfulSleep);
-      layer_mark_dirty(s_journey_layer);
+      journey_set_sleeping(s_state.sleeping);
       break;
     }
     case HealthEventMovementUpdate: {
       s_state.steps = (int32_t)health_service_sum_today(HealthMetricStepCount);
-      layer_mark_dirty(s_journey_layer);
+      journey_set_steps(s_state.steps);
       break;
     }
     default:
@@ -248,11 +284,21 @@ void face_on_health(HealthEventType event) {
 #endif
 
 void face_on_tap(AccelAxisType axis, int32_t direction) {
-  /* TODO Phase 1: kick off a full ceremonial roll across all three dice.
-   * For now, just force a redraw so the tap is visibly registered. */
-  layer_mark_dirty(s_hour_layer);
-  layer_mark_dirty(s_tens_layer);
-  layer_mark_dirty(s_ones_layer);
+  if (!s_warm) return;
+
+  /* Time-sampling rule: snapshot the wall clock once, animate for fixed
+   * duration, and settle all three dice on this exact time. If the minute
+   * advances mid-tumble, the dice still land on the sampled values; the
+   * next minute tick will then SHAKE them to the new value. */
+  time_t now = time(NULL);
+  struct tm *tm_now = localtime(&now);
+  int hour = tm_now->tm_hour % 12;
+  if (hour == 0) hour = 12;
+  int minute = tm_now->tm_min;
+
+  tumble_start(&s_hour_tumble, TUMBLE_FULL, hour);
+  tumble_start(&s_tens_tumble, TUMBLE_FULL, minute / 10);
+  tumble_start(&s_ones_tumble, TUMBLE_FULL, minute % 10);
 }
 
 void face_on_bluetooth(bool connected) {
