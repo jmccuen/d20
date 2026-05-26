@@ -206,7 +206,7 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
   if (hour_changed || s_state.hour != new_hour) {
     s_state.hour = new_hour;
     if (s_warm) {
-      tumble_start(&s_hour_tumble, TUMBLE_QUICK, new_hour);
+      tumble_start(&s_hour_tumble, TUMBLE_QUICK, new_hour, 0);
     } else {
       s_hour_die.value = new_hour;
       layer_mark_dirty(s_hour_layer);
@@ -219,7 +219,7 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
     int new_ones = new_minute % 10;
     if (s_tens_die.value != new_tens) {
       if (s_warm) {
-        tumble_start(&s_tens_tumble, TUMBLE_SHAKE, new_tens);
+        tumble_start(&s_tens_tumble, TUMBLE_SHAKE, new_tens, 0);
       } else {
         s_tens_die.value = new_tens;
         layer_mark_dirty(s_tens_layer);
@@ -227,7 +227,7 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
     }
     if (s_ones_die.value != new_ones) {
       if (s_warm) {
-        tumble_start(&s_ones_tumble, TUMBLE_SHAKE, new_ones);
+        tumble_start(&s_ones_tumble, TUMBLE_SHAKE, new_ones, 0);
       } else {
         s_ones_die.value = new_ones;
         layer_mark_dirty(s_ones_layer);
@@ -289,16 +289,21 @@ void face_on_tap(AccelAxisType axis, int32_t direction) {
   /* Time-sampling rule: snapshot the wall clock once, animate for fixed
    * duration, and settle all three dice on this exact time. If the minute
    * advances mid-tumble, the dice still land on the sampled values; the
-   * next minute tick will then SHAKE them to the new value. */
+   * next minute tick will then SHAKE them to the new value.
+   *
+   * Cascade: lighter dice fire first; the heavy hour die fires last and
+   * also spins longer (DUR_FULL_HOUR_MS > DUR_FULL_MIN_MS), so the
+   * settle order is ones → tens → hour. Reads as a thrown handful where
+   * the heavy die keeps rolling after the light ones have stopped. */
   time_t now = time(NULL);
   struct tm *tm_now = localtime(&now);
   int hour = tm_now->tm_hour % 12;
   if (hour == 0) hour = 12;
   int minute = tm_now->tm_min;
 
-  tumble_start(&s_hour_tumble, TUMBLE_FULL, hour);
-  tumble_start(&s_tens_tumble, TUMBLE_FULL, minute / 10);
-  tumble_start(&s_ones_tumble, TUMBLE_FULL, minute % 10);
+  tumble_start(&s_ones_tumble, TUMBLE_FULL, minute % 10,   0);
+  tumble_start(&s_tens_tumble, TUMBLE_FULL, minute / 10, 100);
+  tumble_start(&s_hour_tumble, TUMBLE_FULL, hour,        200);
 }
 
 void face_on_bluetooth(bool connected) {

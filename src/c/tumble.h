@@ -43,5 +43,9 @@ void tumble_init(TumbleHandle *h, Die *die, Layer *layer);
 void tumble_deinit(TumbleHandle *h);
 
 /* Cancels any in-flight animation on this handle and schedules a new one.
- * target_value is the face the die should display when the tumble settles. */
-void tumble_start(TumbleHandle *h, TumbleKind kind, int16_t target_value);
+ * target_value is the face the die should display when the tumble settles.
+ * delay_ms holds the tumble before the spin actually starts — used by
+ * the cascading tap roll so the lighter dice fire first and the heavy
+ * hour die fires last. */
+void tumble_start(TumbleHandle *h, TumbleKind kind,
+                  int16_t target_value, uint32_t delay_ms);

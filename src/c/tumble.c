@@ -14,10 +14,16 @@
 
 /* Durations are tuned for the 3D tumble being legible — a 600 ms full
  * roll was too fast to clearly see the polyhedron turning. SHAKE stays
- * snappy since it's a 2D wobble triggered every minute. */
-#define DUR_FULL_MS   1200
-#define DUR_QUICK_MS   800
-#define DUR_SHAKE_MS   100
+ * snappy since it's a 2D wobble triggered every minute.
+ *
+ * Weight-based settling: the big hour die uses a longer FULL duration
+ * so it keeps spinning after the lighter minute dice have already
+ * settled. Combined with the cascading delays in face_on_tap, this
+ * reads as "small dice land first, heavy one lands last." */
+#define DUR_FULL_HOUR_MS  1400
+#define DUR_FULL_MIN_MS    900
+#define DUR_QUICK_MS       800
+#define DUR_SHAKE_MS       100
 
 /* FULL/QUICK now drive a 3D polyhedron via dice3d.c. The per-axis spin
  * counts are integers so progress=1 lands at a multiple of
@@ -121,7 +127,8 @@ void tumble_deinit(TumbleHandle *h) {
   }
 }
 
-void tumble_start(TumbleHandle *h, TumbleKind kind, int16_t target_value) {
+void tumble_start(TumbleHandle *h, TumbleKind kind,
+                  int16_t target_value, uint32_t delay_ms) {
   if (h->anim) {
     animation_unschedule(h->anim);
     /* teardown nulls h->anim and snaps the die to the *old* target_value.
@@ -134,7 +141,10 @@ void tumble_start(TumbleHandle *h, TumbleKind kind, int16_t target_value) {
 
   uint32_t dur;
   switch (kind) {
-    case TUMBLE_FULL:  dur = DUR_FULL_MS;  break;
+    case TUMBLE_FULL:
+      /* Heavy hour die spins longer than the lighter minute dice. */
+      dur = (h->die->type == DIE_HOUR) ? DUR_FULL_HOUR_MS : DUR_FULL_MIN_MS;
+      break;
     case TUMBLE_QUICK: dur = DUR_QUICK_MS; break;
     case TUMBLE_SHAKE: dur = DUR_SHAKE_MS; break;
     default:           dur = DUR_SHAKE_MS; break;
@@ -147,6 +157,7 @@ void tumble_start(TumbleHandle *h, TumbleKind kind, int16_t target_value) {
     .stopped = NULL,
   }, h);
   animation_set_duration(anim, dur);
+  animation_set_delay(anim, delay_ms);
   animation_set_curve(anim, AnimationCurveEaseOut);
 
   h->anim = anim;

@@ -160,6 +160,7 @@ Replaces the in-plane 2D rotation during FULL / QUICK with a true 3D polyhedron 
 - [x] Numeral on front-facing face, drawn axis-aligned at the projected centroid
 - [x] `Die` extended with `tumbling` + `rot_x/y/z`; `die_draw` routes to `dice3d_draw` when tumbling
 - [x] `tumble.c` drives integer spin counts so progress=1 lands at zero net rotation (hides the hard-cut)
+- [x] Cascade + weight: tap roll fires ones (0 ms delay) → tens (100 ms) → hour (200 ms); hour die's `TUMBLE_FULL` duration is 1400 ms vs 900 ms for the minute dice, so settle order is ones → tens → hour (last)
 
 **Phase 2 manual emulator checklist**
 - [ ] Tap triggers a visible 3-dice ceremonial roll: dice tumble as 3D polyhedra (not coins spinning in plane), settle on the current time
