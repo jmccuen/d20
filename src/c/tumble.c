@@ -12,8 +12,11 @@
 
 #include "tumble.h"
 
-#define DUR_FULL_MS    600
-#define DUR_QUICK_MS   400
+/* Durations are tuned for the 3D tumble being legible — a 600 ms full
+ * roll was too fast to clearly see the polyhedron turning. SHAKE stays
+ * snappy since it's a 2D wobble triggered every minute. */
+#define DUR_FULL_MS   1200
+#define DUR_QUICK_MS   800
 #define DUR_SHAKE_MS   100
 
 /* FULL/QUICK now drive a 3D polyhedron via dice3d.c. The per-axis spin
