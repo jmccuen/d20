@@ -14,10 +14,12 @@
  *   - 3D z is OUT of the screen toward the viewer.
  *
  * Winding:
- *   - Face vertex indices are listed CCW when viewed from outside the
- *     polyhedron. After projection (with screen-y flipped), CCW becomes
- *     CW in screen coords, so a front-facing face has NEGATIVE 2D signed
- *     area. We cull when signed area >= 0.
+ *   - Face vertex indices are listed CW when viewed from outside the
+ *     polyhedron (an artefact of the basis used to derive F0; every
+ *     other face was patterned off it, so the whole table is consistent
+ *     in that handedness). After projection with screen-y flipped, CW
+ *     becomes CCW in screen coords, so a front-facing face has POSITIVE
+ *     2D signed area. We cull when signed area <= 0.
  *
  * D12 vertex placement and face list were derived from the standard
  * cube + 3-golden-rectangle construction; values verified by:
@@ -205,20 +207,26 @@ static int32_t signed_area_2d(GPoint a, GPoint b, GPoint c) {
        - (int32_t)(c.x - a.x) * (int32_t)(b.y - a.y);
 }
 
-/* Shading ramp keyed on the face's average transformed z component.
- * +z is toward the viewer (lit), -z is away (in shadow), but for a
- * tumbling die the more useful signal is "is this face roughly facing
- * the upper-left light direction (0.6, 0.6, 0.5)". We approximate this
- * by combining the visible-area orientation (z lift) with a small
- * upper-left bias. */
-static GColor shade_for(int32_t avg_z) {
+/* Light direction: upper-left, slightly toward camera. (-0.6, 0.6, 0.5)
+ * in our fixed-point scale (4096 = 1.0). Pebble screen has y-down, but
+ * dice3d works in 3D-y-up space and flips on projection, so a face whose
+ * (cx, cy, cz) leans (-x, +y, +z) is the one pointing at the light. */
+#define LIGHT_X (-2458)
+#define LIGHT_Y  (2458)
+#define LIGHT_Z  (2048)
+
+/* Shading is centroid · light. Front-facing faces have already been
+ * filtered by backface cull, so cz tends positive; bright/dark variation
+ * comes from how much the face's x/y also align with the light. */
+static GColor shade_for_centroid(int32_t cx, int32_t cy, int32_t cz) {
+  int32_t bright = (cx * LIGHT_X + cy * LIGHT_Y + cz * LIGHT_Z) / 4096;
 #if defined(PBL_COLOR)
-  if (avg_z >  2400) return GColorWhite;
-  if (avg_z >   800) return GColorLightGray;
-  if (avg_z >  -800) return GColorWindsorTan;
+  if (bright >  1500) return GColorWhite;
+  if (bright >     0) return GColorLightGray;
+  if (bright > -1500) return GColorWindsorTan;
   return GColorBulgarianRose;
 #else
-  return (avg_z > 0) ? GColorWhite : GColorLightGray;
+  return (bright > 0) ? GColorWhite : GColorLightGray;
 #endif
 }
 
@@ -262,15 +270,23 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     GPoint p1 = projected[face->v[1]];
     GPoint p2 = projected[face->v[2]];
     int32_t area = signed_area_2d(p0, p1, p2);
-    if (area >= 0) continue;  /* back-facing (CCW-from-outside → CW after y-flip) */
+    if (area <= 0) continue;  /* back-facing (CW-from-outside → CCW after y-flip; front faces come out positive) */
 
-    /* Average z of transformed vertices — proxy for "tilt toward viewer". */
-    int32_t sum_z = 0;
-    for (int k = 0; k < face->n; k++) sum_z += transformed[face->v[k]].z;
-    int32_t avg_z = sum_z / face->n;
+    /* 3D centroid of transformed vertices. cz alone is the "tilt toward
+     * viewer" signal (used to pick the front face for the numeral); the
+     * full (cx, cy, cz) feeds the lighting calculation. */
+    int32_t cx = 0, cy = 0, cz = 0;
+    for (int k = 0; k < face->n; k++) {
+      cx += transformed[face->v[k]].x;
+      cy += transformed[face->v[k]].y;
+      cz += transformed[face->v[k]].z;
+    }
+    cx /= face->n;
+    cy /= face->n;
+    cz /= face->n;
 
-    if (avg_z > front_z) {
-      front_z   = avg_z;
+    if (cz > front_z) {
+      front_z   = cz;
       front_idx = f;
     }
 
@@ -279,7 +295,7 @@ void dice3d_draw(GContext *ctx, const Die *die) {
 
     GPathInfo info = { face->n, face_pts };
     GPath *path = gpath_create(&info);
-    graphics_context_set_fill_color(ctx, shade_for(avg_z));
+    graphics_context_set_fill_color(ctx, shade_for_centroid(cx, cy, cz));
     gpath_draw_filled(ctx, path);
     graphics_context_set_stroke_color(ctx, outline);
     graphics_context_set_stroke_width(ctx, 1);
