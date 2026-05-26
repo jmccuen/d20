@@ -60,6 +60,29 @@ static TumbleHandle s_ones_tumble;
  * the first face_on_tick so subsequent ticks and taps animate. */
 static bool s_warm;
 
+/* Dev-only auto-roll. When DEBUG_AUTO_ROLL is defined, a repeating
+ * app_timer fires face_on_tap every DEBUG_AUTO_ROLL_MS so the ceremonial
+ * roll is visible without depending on the emulator's tap simulator.
+ * Comment out for production builds. */
+#define DEBUG_AUTO_ROLL
+#define DEBUG_AUTO_ROLL_MS 5000
+
+#ifdef DEBUG_AUTO_ROLL
+static AppTimer *s_debug_timer;
+
+static void debug_roll_fire(void *context);
+
+static void debug_roll_schedule(void) {
+  s_debug_timer = app_timer_register(DEBUG_AUTO_ROLL_MS,
+                                     debug_roll_fire, NULL);
+}
+
+static void debug_roll_fire(void *context) {
+  face_on_tap(0, 0);
+  debug_roll_schedule();
+}
+#endif
+
 /* --- Update procs ------------------------------------------------------- */
 
 static void hour_die_update(Layer *layer, GContext *ctx) {
@@ -177,9 +200,19 @@ void face_init(Window *window) {
   tumble_init(&s_ones_tumble, &s_ones_die, s_ones_layer);
   journey_init(s_journey_layer, s_state.step_goal);
   s_warm = false;
+
+#ifdef DEBUG_AUTO_ROLL
+  debug_roll_schedule();
+#endif
 }
 
 void face_deinit(void) {
+#ifdef DEBUG_AUTO_ROLL
+  if (s_debug_timer) {
+    app_timer_cancel(s_debug_timer);
+    s_debug_timer = NULL;
+  }
+#endif
   journey_deinit();
   tumble_deinit(&s_ones_tumble);
   tumble_deinit(&s_tens_tumble);
