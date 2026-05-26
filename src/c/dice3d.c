@@ -13,13 +13,19 @@
  *   - 3D y is UP; Pebble screen y is DOWN. We negate y on projection.
  *   - 3D z is OUT of the screen toward the viewer.
  *
- * Winding:
- *   - Face vertex indices are listed CW when viewed from outside the
- *     polyhedron (an artefact of the basis used to derive F0; every
- *     other face was patterned off it, so the whole table is consistent
- *     in that handedness). After projection with screen-y flipped, CW
- *     becomes CCW in screen coords, so a front-facing face has POSITIVE
- *     2D signed area. We cull when signed area <= 0.
+ * Culling:
+ *   - The polyhedra are regular and centered at the origin, so each
+ *     face's outward-normal direction passes through its 3D centroid.
+ *     "Face faces the camera" is therefore exactly "centroid.z > 0",
+ *     with no dependence on vertex winding order in the face table.
+ *     This is more robust than 2D signed-area culling, which is
+ *     sensitive to per-face winding inconsistencies in hand-built
+ *     polyhedron tables.
+ *
+ * Winding (within faces):
+ *   - Vertex order inside each face is whatever the table gives us.
+ *     gpath_draw_filled handles either CW or CCW for convex polygons
+ *     (pentagons in D12, kites in D10) identically.
  *
  * D12 vertex placement and face list were derived from the standard
  * cube + 3-golden-rectangle construction; values verified by:
@@ -202,11 +208,6 @@ static GPoint project(Vec3 v, GPoint center, int16_t radius) {
     center.y - (int16_t)((int32_t)v.y * radius / UNIT_FP));
 }
 
-static int32_t signed_area_2d(GPoint a, GPoint b, GPoint c) {
-  return (int32_t)(b.x - a.x) * (int32_t)(c.y - a.y)
-       - (int32_t)(c.x - a.x) * (int32_t)(b.y - a.y);
-}
-
 /* Light direction: upper-left, slightly toward camera. (-0.6, 0.6, 0.5)
  * in our fixed-point scale (4096 = 1.0). Pebble screen has y-down, but
  * dice3d works in 3D-y-up space and flips on projection, so a face whose
@@ -257,24 +258,19 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     projected  [i] = project(transformed[i], die->center, die->radius);
   }
 
-  /* Walk faces: cull back-facing, draw filled + outlined, track the
-   * "most front-facing" face for the numeral. */
+  /* Walk faces: cull back-facing (centroid.z <= 0), shade by centroid·light,
+   * draw filled + outlined, and track the front-most face for the numeral. */
   int     front_idx = -1;
-  int32_t front_z   = -1000000;
+  int32_t front_z   = 0;       /* anything with cz > 0 wins on first pass */
   GColor  outline   = GColorBlack;
 
   for (int f = 0; f < n_faces; f++) {
     const Face *face = &faces[f];
 
-    GPoint p0 = projected[face->v[0]];
-    GPoint p1 = projected[face->v[1]];
-    GPoint p2 = projected[face->v[2]];
-    int32_t area = signed_area_2d(p0, p1, p2);
-    if (area <= 0) continue;  /* back-facing (CW-from-outside → CCW after y-flip; front faces come out positive) */
-
-    /* 3D centroid of transformed vertices. cz alone is the "tilt toward
-     * viewer" signal (used to pick the front face for the numeral); the
-     * full (cx, cy, cz) feeds the lighting calculation. */
+    /* 3D centroid of transformed vertices. For a regular polyhedron
+     * centered at origin, this lies on the face's outward-normal axis,
+     * so cz > 0 is equivalent to "face is on the camera-facing
+     * hemisphere" — winding-independent. */
     int32_t cx = 0, cy = 0, cz = 0;
     for (int k = 0; k < face->n; k++) {
       cx += transformed[face->v[k]].x;
@@ -284,6 +280,8 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     cx /= face->n;
     cy /= face->n;
     cz /= face->n;
+
+    if (cz <= 0) continue;     /* back-facing — cull */
 
     if (cz > front_z) {
       front_z   = cz;
