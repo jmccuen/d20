@@ -22,10 +22,14 @@ typedef enum {
 typedef struct {
   GPoint   center;     /* in layer-local coordinates */
   int16_t  radius;
-  int16_t  value;      /* the face currently displayed */
-  int32_t  rotation;   /* 0..TRIG_MAX_ANGLE */
+  int16_t  value;      /* settled face value */
+  int32_t  rotation;   /* legacy 2D rotation, used by TUMBLE_SHAKE        */
   DieType  type;
-  bool     flash;      /* one-frame palette swap on tumble settle */
+  bool     flash;      /* one-frame palette swap on tumble settle         */
+  bool     tumbling;   /* when true, die_draw routes to dice3d (3D)       */
+  int32_t  rot_x;      /* 3D Euler angles, used during FULL/QUICK tumble  */
+  int32_t  rot_y;
+  int32_t  rot_z;
 } Die;
 
 void die_draw(GContext *ctx, const Die *die);

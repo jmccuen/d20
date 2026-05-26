@@ -16,28 +16,24 @@
 #define DUR_QUICK_MS   400
 #define DUR_SHAKE_MS   100
 
-/* Segment count for face-value flicker. Value re-randomizes when the
- * progress segment index ticks over. Last segment always shows the
- * target value with flash highlight on. */
-#define FULL_SEGMENTS   6
-#define QUICK_SEGMENTS  4
+/* FULL/QUICK now drive a 3D polyhedron via dice3d.c. The per-axis spin
+ * counts are integers so progress=1 lands at a multiple of
+ * TRIG_MAX_ANGLE — i.e., the die settles at zero net rotation. That's
+ * what makes the hard-cut to die.c's flat settled rendering invisible.
+ *
+ * Different rates per axis keep the tumble chaotic. The hour die
+ * (TUMBLE_QUICK) gets fewer total turns so the animation reads faster. */
+#define FULL_SPINS_X   2
+#define FULL_SPINS_Y   3
+#define FULL_SPINS_Z   1
 
-/* Total spin during full / quick roll, in full turns. */
-#define FULL_SPINS   3
-#define QUICK_SPINS  2
+#define QUICK_SPINS_X  1
+#define QUICK_SPINS_Y  2
+#define QUICK_SPINS_Z  1
 
 /* Settle-shake wobble amplitude, in fixed-point Pebble angle units.
  * TRIG_MAX_ANGLE = 360°; this works out to ~11°. */
 #define SHAKE_AMPL   (TRIG_MAX_ANGLE / 32)
-
-static int16_t random_face_value(DieType type) {
-  switch (type) {
-    case DIE_HOUR: return 1 + (rand() % 12);
-    case DIE_TENS: return rand() % 6;
-    case DIE_ONES: return rand() % 10;
-  }
-  return 0;
-}
 
 /* --- AnimationImplementation hooks ------------------------------------- */
 
@@ -52,34 +48,33 @@ static void tumble_update(Animation *anim, const AnimationProgress p) {
   Die *die = h->die;
 
   if (h->kind == TUMBLE_SHAKE) {
-    /* Damped sine wobble — amplitude shrinks linearly with progress so the
-     * die quivers and settles. Face value is already the new target; only
-     * rotation animates. */
+    /* Damped sine wobble in 2D — the die is "already settled" and just
+     * quivers to the new value. dice3d isn't engaged for SHAKE. */
     int32_t remaining = ANIMATION_NORMALIZED_MAX - p;
-    int32_t ampl = (int64_t)SHAKE_AMPL * remaining / ANIMATION_NORMALIZED_MAX;
+    int32_t ampl  = (int64_t)SHAKE_AMPL * remaining / ANIMATION_NORMALIZED_MAX;
     int32_t phase = (int64_t)p * 4 * TRIG_MAX_ANGLE / ANIMATION_NORMALIZED_MAX;
     die->rotation = (int64_t)sin_lookup(phase) * ampl / TRIG_MAX_RATIO;
-    die->value = h->target_value;
-    die->flash = false;
+    die->value    = h->target_value;
+    die->tumbling = false;
+    die->flash    = false;
   } else {
-    int n_seg  = (h->kind == TUMBLE_FULL) ? FULL_SEGMENTS : QUICK_SEGMENTS;
-    int spins  = (h->kind == TUMBLE_FULL) ? FULL_SPINS    : QUICK_SPINS;
-
-    die->rotation = (int64_t)p * spins * TRIG_MAX_ANGLE / ANIMATION_NORMALIZED_MAX;
-
-    int seg = (int)((int64_t)p * n_seg / ANIMATION_NORMALIZED_MAX);
-    if (seg >= n_seg - 1) {
-      /* Final segment: lock to target value and flash the body. The
-       * progress curve is ease-out, so this segment is the longest of
-       * the animation in wall time — the flash reads as a deliberate
-       * "click" on settle. */
-      die->value = h->target_value;
-      die->flash = true;
-    } else if (seg != h->last_segment) {
-      h->last_segment = seg;
-      die->value = random_face_value(die->type);
-      die->flash = false;
+    /* FULL/QUICK: 3D polyhedron tumble. Drive Euler angles directly;
+     * dice3d.c reads them in die_draw. Per-axis spin counts are integer
+     * so progress=1 lands at a multiple of TRIG_MAX_ANGLE — the
+     * polyhedron's orientation is zero net at settle, matching what the
+     * flat settled rendering depicts. */
+    int sx, sy, sz;
+    if (h->kind == TUMBLE_FULL) {
+      sx = FULL_SPINS_X; sy = FULL_SPINS_Y; sz = FULL_SPINS_Z;
+    } else {
+      sx = QUICK_SPINS_X; sy = QUICK_SPINS_Y; sz = QUICK_SPINS_Z;
     }
+    die->rot_x    = (int64_t)p * sx * TRIG_MAX_ANGLE / ANIMATION_NORMALIZED_MAX;
+    die->rot_y    = (int64_t)p * sy * TRIG_MAX_ANGLE / ANIMATION_NORMALIZED_MAX;
+    die->rot_z    = (int64_t)p * sz * TRIG_MAX_ANGLE / ANIMATION_NORMALIZED_MAX;
+    die->tumbling = true;
+    /* Face value during tumble comes from whichever face is front-facing
+     * in dice3d — die->value is left alone until teardown. */
   }
 
   layer_mark_dirty(h->layer);
@@ -90,6 +85,10 @@ static void tumble_teardown(Animation *anim) {
   if (!h || !h->die || !h->layer) return;
   h->die->value    = h->target_value;
   h->die->rotation = 0;
+  h->die->rot_x    = 0;
+  h->die->rot_y    = 0;
+  h->die->rot_z    = 0;
+  h->die->tumbling = false;
   h->die->flash    = false;
   h->anim          = NULL;
   layer_mark_dirty(h->layer);

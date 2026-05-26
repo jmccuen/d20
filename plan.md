@@ -6,7 +6,7 @@ A Pebble Time 2 watchface where the time is displayed via animated polyhedral di
 
 ## Status
 
-**Phase 1 visually verified in emulator (`Phase1.png`). Phase 2 animation code is in; manual emulator testing remains to close Phase 2.** Code state:
+**Phase 1 visually verified in emulator (`Phase1.png`). Phase 2 animation code is in (including 2c procedural 3D); manual emulator testing remains to close Phase 2.** Code state:
 
 - **Phase 1 changes:** Vertical layout reworked into five non-overlapping bands (28 / 90 / 48 / 32 / 30 px); pentagon and kite dice gained facet hints; heart enlarged to host the BPM number internally with em-dash for no-data; torch has 4 distinct battery states with percent stacked below; ribbon is a tapered-scroll polygon with fold-crease accents; familiar has a visible silhouette + faded variant; token nudges off-camp when `steps <= 0`.
 - **Phase 2 changes:** New `tumble.h/.c` module owns per-die Pebble Animations. Hour change triggers a ~400 ms re-roll; minute tens/ones changes trigger ~100 ms settle shakes; taps trigger a ~600 ms ceremonial roll across all three dice using a once-per-gesture wall-clock snapshot (time-sampling rule). Dice flash a brighter palette on settle. `journey.c` rewritten to own a slide animation that smoothly walks the token to camp on sleep, away from camp on wake, and between step-count updates the rest of the time; a "Xh Ym rest" label renders under the camp for 2 h after waking. A `s_warm` gate suppresses animations during the initial state push so the dice snap to their first values without a roll.
@@ -42,7 +42,8 @@ src/c/
 
 Phase 2 adds:
 ```
-└── tumble.h/.c   — per-die animation state machines and tumble curve
+├── tumble.h/.c   — per-die animation state machines and tumble curve
+└── dice3d.h/.c   — procedural 3D polyhedron renderer for FULL/QUICK tumble
 ```
 
 Phase 5 adds:
@@ -148,10 +149,23 @@ Rationale: full ceremonial rolls are reserved for moments where the user is actu
 - [x] Sleep transition: token slides to camp on `journey_set_sleeping(true)`; slides back to step-position on wake (longer `SLIDE_SLEEP_MS` curve, ease-in-out)
 - [x] Wake label: `Xh Ym rest` renders under camp for 2 h after waking, derived from `(sleep_started_at, sleep_ended_at)` (`journey.c:draw_rest_label`)
 
+**Phase 2c — Procedural 3D tumble**
+
+Replaces the in-plane 2D rotation during FULL / QUICK with a true 3D polyhedron rotation. SHAKE stays 2D — a per-minute shake doesn't need a polyhedron tumble. Decisions locked: D12 for the hour die, baked-in face numerals, upper-left light direction with 4-step palette ramp (`GColorWhite` / `GColorLightGray` / `GColorWindsorTan` / `GColorBulgarianRose`), hard-cut to settled rendering on settle.
+
+- [x] `dice3d.h/.c` — D12 (20 verts / 12 pentagonal faces, values 1-12 with opposite pairs summing to 13) and D10 trapezohedron (12 verts / 10 kite faces, values 0-9)
+- [x] 3-axis Euler rotation via `sin_lookup`/`cos_lookup`, orthographic projection
+- [x] 2D signed-area backface cull
+- [x] 4-color flat shading keyed on transformed-vertex average z
+- [x] Numeral on front-facing face, drawn axis-aligned at the projected centroid
+- [x] `Die` extended with `tumbling` + `rot_x/y/z`; `die_draw` routes to `dice3d_draw` when tumbling
+- [x] `tumble.c` drives integer spin counts so progress=1 lands at zero net rotation (hides the hard-cut)
+
 **Phase 2 manual emulator checklist**
-- [ ] Tap (or simulated tap) triggers a visible 3-dice ceremonial roll that settles on the current time
-- [ ] At XX:00 the hour die re-rolls in place; nothing else animates
-- [ ] On minute change, only the changed die(s) settle-shake briefly
+- [ ] Tap triggers a visible 3-dice ceremonial roll: dice tumble as 3D polyhedra (not coins spinning in plane), settle on the current time
+- [ ] At XX:00 the hour die tumbles in 3D and re-settles
+- [ ] On minute change, only the changed die(s) do the 2D settle-shake (not the 3D tumble — that's only for FULL/QUICK)
+- [ ] All D12 / D10 faces appear visible at some rotation (none permanently culled — would indicate winding-order bugs in `dice3d.c`'s face tables)
 - [ ] Triggering sleep mode slides the token to camp; ending sleep slides it back
 - [ ] After sleep ends, "Xh Ym rest" label is visible under the camp; gone after 2 h
 - [ ] Cold start: dice show first value with no animation

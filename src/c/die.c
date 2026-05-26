@@ -20,6 +20,7 @@
  */
 
 #include "die.h"
+#include "dice3d.h"
 
 #define COLOR_DIE_BODY    PBL_IF_COLOR_ELSE(GColorLightGray,   GColorWhite)
 #define COLOR_DIE_FLASH   PBL_IF_COLOR_ELSE(GColorIcterine,    GColorWhite)
@@ -115,6 +116,14 @@ static void draw_face_number(GContext *ctx, const Die *die) {
 }
 
 void die_draw(GContext *ctx, const Die *die) {
+  /* During a FULL/QUICK tumble, hand off to the procedural 3D
+   * polyhedron renderer. The hard-cut back to the flat settled
+   * rendering happens when tumble.c clears Die.tumbling on settle. */
+  if (die->tumbling) {
+    dice3d_draw(ctx, die);
+    return;
+  }
+
   if (die->type == DIE_HOUR) {
     draw_pentagon(ctx, die->center, die->radius, die->rotation, die->flash);
   } else {
