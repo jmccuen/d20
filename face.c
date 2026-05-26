@@ -1,0 +1,254 @@
+/*
+ * face.c — owns FaceState and the layer tree.
+ *
+ * The face_on_* functions update FaceState, then mark_dirty only the layers
+ * whose underlying data changed. The layer update_procs read from
+ * s_state / the static Die instances and dispatch to the module's draw
+ * function.
+ *
+ * Animation triggers (wrist-raise, hour change, etc.) are stubbed in Phase 0
+ * and will land in Phase 1.
+ */
+
+#include "face.h"
+#include "die.h"
+#include "journey.h"
+#include "widgets.h"
+
+/* --- State -------------------------------------------------------------- */
+
+typedef struct {
+  int8_t   hour;          /* 1..12                              */
+  int8_t   minute;        /* 0..59                              */
+  int16_t  day_of_year;
+  char     date_str[16];  /* e.g. "26 May"                      */
+
+  int16_t  heart_rate;    /* BPM, 0 when unavailable            */
+  uint8_t  battery_pct;
+  bool     bluetooth;
+  bool     sleeping;
+
+  int32_t  steps;
+  int32_t  step_goal;
+} FaceState;
+
+static FaceState s_state;
+
+static Layer *s_ribbon_layer;
+static Layer *s_hour_layer;
+static Layer *s_tens_layer;
+static Layer *s_ones_layer;
+static Layer *s_stats_layer;
+static Layer *s_journey_layer;
+
+static Die s_hour_die;
+static Die s_tens_die;
+static Die s_ones_die;
+
+/* --- Update procs ------------------------------------------------------- */
+
+static void hour_die_update(Layer *layer, GContext *ctx) {
+  die_draw(ctx, &s_hour_die);
+}
+
+static void tens_die_update(Layer *layer, GContext *ctx) {
+  die_draw(ctx, &s_tens_die);
+}
+
+static void ones_die_update(Layer *layer, GContext *ctx) {
+  die_draw(ctx, &s_ones_die);
+}
+
+static void ribbon_update(Layer *layer, GContext *ctx) {
+  widgets_draw_ribbon(ctx, layer_get_bounds(layer),
+                      s_state.day_of_year, s_state.date_str,
+                      s_state.bluetooth);
+}
+
+static void stats_update(Layer *layer, GContext *ctx) {
+  widgets_draw_stats(ctx, layer_get_bounds(layer),
+                     s_state.heart_rate, s_state.battery_pct);
+}
+
+static void journey_update(Layer *layer, GContext *ctx) {
+  journey_draw(ctx, layer_get_bounds(layer),
+               s_state.steps, s_state.step_goal, s_state.sleeping);
+}
+
+/* --- Init / deinit ------------------------------------------------------ */
+
+void face_init(Window *window) {
+  Layer *root = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(root);
+
+  /* GColorPastelYellow is the closest parchment-cream in the 64-color
+   * palette. Tune by eye in the emulator. */
+  window_set_background_color(window, PBL_IF_COLOR_ELSE(GColorPastelYellow, GColorWhite));
+
+  /* Defaults — overwritten by the initial push from main.c */
+  s_state.step_goal   = 10000;
+  s_state.hour        = 12;
+  s_state.minute      = 0;
+  s_state.battery_pct = 100;
+  s_state.bluetooth   = true;
+
+  /* Date ribbon along the top. */
+  s_ribbon_layer = layer_create(GRect(0, 0, bounds.size.w, 28));
+  layer_set_update_proc(s_ribbon_layer, ribbon_update);
+  layer_add_child(root, s_ribbon_layer);
+
+  /* Hour die — large, centered upper area. */
+  const int16_t hour_r = 45;
+  s_hour_layer = layer_create(GRect(bounds.size.w / 2 - hour_r, 36,
+                                     hour_r * 2, hour_r * 2));
+  s_hour_die = (Die){
+    .center = GPoint(hour_r, hour_r),
+    .radius = hour_r,
+    .value  = 12,
+    .rotation = 0,
+    .type = DIE_HOUR,
+  };
+  layer_set_update_proc(s_hour_layer, hour_die_update);
+  layer_add_child(root, s_hour_layer);
+
+  /* Minute dice — two side by side below the hour. */
+  const int16_t min_r = 26;
+  int16_t tens_x = bounds.size.w * 30 / 100 - min_r;
+  int16_t ones_x = bounds.size.w * 70 / 100 - min_r;
+  int16_t min_y  = 132;
+
+  s_tens_layer = layer_create(GRect(tens_x, min_y, min_r * 2, min_r * 2));
+  s_tens_die = (Die){
+    .center = GPoint(min_r, min_r),
+    .radius = min_r,
+    .value  = 0,
+    .rotation = 0,
+    .type = DIE_TENS,
+  };
+  layer_set_update_proc(s_tens_layer, tens_die_update);
+  layer_add_child(root, s_tens_layer);
+
+  s_ones_layer = layer_create(GRect(ones_x, min_y, min_r * 2, min_r * 2));
+  s_ones_die = (Die){
+    .center = GPoint(min_r, min_r),
+    .radius = min_r,
+    .value  = 0,
+    .rotation = 0,
+    .type = DIE_ONES,
+  };
+  layer_set_update_proc(s_ones_layer, ones_die_update);
+  layer_add_child(root, s_ones_layer);
+
+  /* Stats row (HP + torch). */
+  s_stats_layer = layer_create(GRect(0, bounds.size.h - 64,
+                                      bounds.size.w, 32));
+  layer_set_update_proc(s_stats_layer, stats_update);
+  layer_add_child(root, s_stats_layer);
+
+  /* Journey strip pinned to the bottom. */
+  s_journey_layer = layer_create(GRect(0, bounds.size.h - 30,
+                                        bounds.size.w, 30));
+  layer_set_update_proc(s_journey_layer, journey_update);
+  layer_add_child(root, s_journey_layer);
+}
+
+void face_deinit(void) {
+  layer_destroy(s_journey_layer);
+  layer_destroy(s_stats_layer);
+  layer_destroy(s_ones_layer);
+  layer_destroy(s_tens_layer);
+  layer_destroy(s_hour_layer);
+  layer_destroy(s_ribbon_layer);
+}
+
+/* --- Event handlers ----------------------------------------------------- */
+
+void face_on_tick(struct tm *tt, TimeUnits units_changed) {
+  bool hour_changed   = (units_changed & HOUR_UNIT)   != 0;
+  bool minute_changed = (units_changed & MINUTE_UNIT) != 0;
+  bool day_changed    = (units_changed & DAY_UNIT)    != 0;
+
+  int new_hour = tt->tm_hour % 12;
+  if (new_hour == 0) new_hour = 12;
+  int new_minute = tt->tm_min;
+
+  if (hour_changed || s_state.hour != new_hour) {
+    s_state.hour     = new_hour;
+    s_hour_die.value = new_hour;
+    /* TODO Phase 1: trigger hour-die re-roll animation. */
+    layer_mark_dirty(s_hour_layer);
+  }
+
+  if (minute_changed || s_state.minute != new_minute) {
+    s_state.minute = new_minute;
+    int new_tens = new_minute / 10;
+    int new_ones = new_minute % 10;
+    if (s_tens_die.value != new_tens) {
+      s_tens_die.value = new_tens;
+      /* TODO Phase 1: settle-shake on the tens die. */
+      layer_mark_dirty(s_tens_layer);
+    }
+    if (s_ones_die.value != new_ones) {
+      s_ones_die.value = new_ones;
+      /* TODO Phase 1: settle-shake on the ones die. */
+      layer_mark_dirty(s_ones_layer);
+    }
+  }
+
+  if (day_changed || s_state.date_str[0] == '\0') {
+    s_state.day_of_year = tt->tm_yday + 1;
+    strftime(s_state.date_str, sizeof(s_state.date_str), "%d %b", tt);
+    layer_mark_dirty(s_ribbon_layer);
+  }
+
+  /* Poll steps each minute — cheap. */
+#if defined(PBL_HEALTH)
+  s_state.steps = (int32_t)health_service_sum_today(HealthMetricStepCount);
+  layer_mark_dirty(s_journey_layer);
+#endif
+}
+
+void face_on_battery(BatteryChargeState s) {
+  s_state.battery_pct = s.charge_percent;
+  layer_mark_dirty(s_stats_layer);
+}
+
+#if defined(PBL_HEALTH)
+void face_on_health(HealthEventType event) {
+  switch (event) {
+    case HealthEventHeartRateUpdate: {
+      HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateBPM);
+      s_state.heart_rate = (int16_t)bpm;
+      layer_mark_dirty(s_stats_layer);
+      break;
+    }
+    case HealthEventSleepUpdate: {
+      HealthActivityMask mask = health_service_peek_current_activities();
+      s_state.sleeping = (mask & HealthActivitySleep) ||
+                         (mask & HealthActivityRestfulSleep);
+      layer_mark_dirty(s_journey_layer);
+      break;
+    }
+    case HealthEventMovementUpdate: {
+      s_state.steps = (int32_t)health_service_sum_today(HealthMetricStepCount);
+      layer_mark_dirty(s_journey_layer);
+      break;
+    }
+    default:
+      break;
+  }
+}
+#endif
+
+void face_on_tap(AccelAxisType axis, int32_t direction) {
+  /* TODO Phase 1: kick off a full ceremonial roll across all three dice.
+   * For now, just force a redraw so the tap is visibly registered. */
+  layer_mark_dirty(s_hour_layer);
+  layer_mark_dirty(s_tens_layer);
+  layer_mark_dirty(s_ones_layer);
+}
+
+void face_on_bluetooth(bool connected) {
+  s_state.bluetooth = connected;
+  layer_mark_dirty(s_ribbon_layer);
+}

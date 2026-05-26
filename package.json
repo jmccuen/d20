@@ -1,0 +1,31 @@
+{
+  "name": "dnd-dice-watchface",
+  "author": "",
+  "version": "0.1.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "D&D Dice",
+    "uuid": "REPLACE-WITH-uuidgen-OUTPUT",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": ["emery"],
+    "watchapp": {
+      "watchface": true
+    },
+    "messageKeys": [
+      "CLASS",
+      "FAMILIAR",
+      "STEP_GOAL",
+      "SLEEP_OVERRIDE"
+    ],
+    "capabilities": [
+      "health",
+      "configurable"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}
