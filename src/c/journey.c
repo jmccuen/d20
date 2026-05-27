@@ -57,6 +57,9 @@ static struct {
 
 /* Mage sprite frames + campfire sprite. Loaded once in journey_init,
  * released in journey_deinit. */
+#define CAMP_W  10
+#define CAMP_H  10
+
 static GBitmap *s_mage_idle_1;
 static GBitmap *s_mage_idle_2;  /* reserved for future idle cycle */
 static GBitmap *s_mage_walk_1;
@@ -210,14 +213,12 @@ void journey_set_sleeping(bool sleeping) {
 /* --- Drawing primitives ------------------------------------------------- */
 
 static void draw_camp(GContext *ctx, GPoint at, bool sleeping) {
-  /* Camp sprite is 32×32 with the campfire centered. Layer clipping
-   * trims the 1-px slivers that fall outside the 30-px journey strip.
-   * sleeping is unused for the moment — the campfire is always lit in
-   * the source art; a separate "idle tent / no flame" variant can come
-   * later if we want the distinction. */
+  /* Camp sprite is 10×10. Centered on (at.x, at.y) — the trail midline.
+   * sleeping is unused for now: the campfire is always lit in the art.
+   * A separate idle / no-flame variant can come later. */
   (void)sleeping;
   if (!s_camp) return;
-  GRect dest = GRect(at.x - 16, at.y - 16, 32, 32);
+  GRect dest = GRect(at.x - CAMP_W / 2, at.y - CAMP_H / 2, CAMP_W, CAMP_H);
   graphics_context_set_compositing_mode(ctx, GCompOpSet);
   graphics_draw_bitmap_in_rect(ctx, s_camp, dest);
 }

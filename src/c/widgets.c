@@ -68,30 +68,19 @@ void widgets_draw_ribbon(GContext *ctx, GRect b,
     graphics_draw_bitmap_in_rect(ctx, s_banner, b);
   }
 
-  /* Feather quill on the left corner. */
+  /* Feather quill, sitting inboard of the banner's left taper. */
   if (s_feather) {
     graphics_context_set_compositing_mode(ctx, GCompOpSet);
     graphics_draw_bitmap_in_rect(ctx, s_feather,
-      GRect(b.origin.x + 4,
+      GRect(b.origin.x + 14,
             b.origin.y + (b.size.h - 20) / 2,
             20, 20));
   }
 
-  /* Date text centered, with slots reserved on both ends for the
-   * feather (left) and familiar (right). */
-  char buf[24];
-  snprintf(buf, sizeof(buf), "Day %d  %s", doy, date);
-  graphics_context_set_text_color(ctx, COLOR_INK);
-  graphics_draw_text(ctx, buf,
-    fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
-    GRect(b.origin.x + 26, b.origin.y - 2,
-          b.size.w - 52, b.size.h),
-    GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
-
-  /* Familiar placeholder in the right corner. Connected: solid outline
-   * + eye dot; disconnected: faded outline. Phase 5 swaps to selectable
-   * creature silhouettes. */
-  GPoint fam = GPoint(b.origin.x + b.size.w - 14,
+  /* Familiar placeholder, mirrored inboard of the banner's right taper.
+   * Connected: solid outline + eye dot; disconnected: faded outline.
+   * Phase 5 swaps to selectable creature silhouettes. */
+  GPoint fam = GPoint(b.origin.x + b.size.w - 24,
                       b.origin.y + b.size.h / 2);
   if (bt) {
     graphics_context_set_stroke_color(ctx, COLOR_INK);
@@ -104,6 +93,20 @@ void widgets_draw_ribbon(GContext *ctx, GRect b,
     graphics_context_set_stroke_width(ctx, 1);
     graphics_draw_circle(ctx, fam, 5);
   }
+
+  /* Date text. Pushed down by ~5 px so the cap-height sits at the
+   * banner's vertical mid-line. Width clamped to the space between
+   * feather and familiar (with 2 px breathing room each side). Format
+   * uses `%b` (abbreviated month — "May", "Sep", "Oct") so even the
+   * widest months fit; full month names overflow at 18 pt. */
+  char buf[24];
+  snprintf(buf, sizeof(buf), "Day %d  %s", doy, date);
+  graphics_context_set_text_color(ctx, COLOR_INK);
+  graphics_draw_text(ctx, buf,
+    fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
+    GRect(b.origin.x + 36, b.origin.y + 5,
+          b.size.w - 72, b.size.h),
+    GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
 /* --- Heart with BPM inside (procedural) -------------------------------- */
