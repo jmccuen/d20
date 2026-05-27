@@ -59,12 +59,14 @@ static Layer       *s_dice_layer;
 static Layer       *s_stats_layer;
 static Layer       *s_journey_layer;
 
-/* Background parchment. Currently a flat-color fill — the 200×228
- * parchment bitmap was crashing the watch with an app fault, almost
- * certainly OOM (the decoded bitmap is ~45 KB, which pushes us over
- * the Emery app-heap budget once the other sprites are also loaded).
- * The bitmap resource declaration stays in package.json so we can
- * re-enable later via texture overlay or a smaller version. */
+/* Background parchment. Drawn procedurally as a 3-band "vignette" —
+ * darker frame, warm tan body, pale cream center highlight — costing
+ * three filled rects per redraw and zero bitmap memory. The bitmap
+ * version was crashing on device with an app fault (OOM: the decoded
+ * 200×228 bitmap was ~45 KB, well over the Emery app-heap budget once
+ * the other sprites loaded). The procedural version sells the same
+ * "aged scroll on a wood desk" look — the outer band reads as the
+ * desk under the parchment in the small visible corners. */
 static Layer *s_bg_layer;
 
 static Die s_hour_die;
@@ -98,6 +100,8 @@ static void debug_roll_schedule(void) {
 }
 
 static void debug_roll_fire(void *context) {
+  APP_LOG(APP_LOG_LEVEL_INFO, "auto-roll tick: heap %u free",
+          (unsigned)heap_bytes_free());
   face_on_tap(0, 0);
   debug_roll_schedule();
 }
@@ -153,6 +157,9 @@ static void journey_update(Layer *layer, GContext *ctx) {
 void face_init(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
+
+  APP_LOG(APP_LOG_LEVEL_INFO, "face_init begin: heap %u free",
+          (unsigned)heap_bytes_free());
 
   /* Fallback color in case the bg layer's update_proc hasn't fired yet
    * (single-frame transient). */
@@ -235,10 +242,18 @@ void face_init(Window *window) {
                &s_hour_die, &s_tens_die, &s_ones_die,
                s_hour_die.center, s_tens_die.center, s_ones_die.center,
                GRect(6, 6, bounds.size.w - 12, 138 - 12));
+  APP_LOG(APP_LOG_LEVEL_INFO, "after physics_init: heap %u free",
+          (unsigned)heap_bytes_free());
 
   /* Sprite-owning modules load their bitmaps in their init. */
   widgets_init();
+  APP_LOG(APP_LOG_LEVEL_INFO, "after widgets_init: heap %u free",
+          (unsigned)heap_bytes_free());
+
   journey_init(s_journey_layer, s_state.step_goal);
+  APP_LOG(APP_LOG_LEVEL_INFO, "after journey_init: heap %u free",
+          (unsigned)heap_bytes_free());
+
   s_warm = false;
 
 #ifdef DEBUG_AUTO_ROLL

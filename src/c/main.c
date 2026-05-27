@@ -50,6 +50,8 @@ static void prv_window_unload(Window *window) {
 /* --- App init / deinit -------------------------------------------------- */
 
 static void prv_init(void) {
+  APP_LOG(APP_LOG_LEVEL_INFO, "boot: heap %u free",
+          (unsigned)heap_bytes_free());
   s_window = window_create();
   window_set_window_handlers(s_window, (WindowHandlers) {
     .load   = prv_window_load,

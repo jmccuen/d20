@@ -32,15 +32,25 @@ static GBitmap *s_torch_frames[TORCH_N_FRAMES];
 
 void widgets_init(void) {
   s_banner      = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_TOP_BANNER);
+  if (!s_banner)
+    APP_LOG(APP_LOG_LEVEL_WARNING, "widgets: banner failed to load");
   s_feather     = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_FEATHER);
+  if (!s_feather)
+    APP_LOG(APP_LOG_LEVEL_WARNING, "widgets: feather failed to load");
   s_torch_sheet = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_TORCH_SHEET);
-  if (s_torch_sheet) {
+  if (!s_torch_sheet) {
+    APP_LOG(APP_LOG_LEVEL_WARNING, "widgets: torch sheet failed to load");
+  } else {
     for (int i = 0; i < TORCH_N_FRAMES; i++) {
       s_torch_frames[i] = gbitmap_create_as_sub_bitmap(
         s_torch_sheet,
         GRect(i * TORCH_FRAME_W, 0, TORCH_FRAME_W, TORCH_FRAME_H));
+      if (!s_torch_frames[i])
+        APP_LOG(APP_LOG_LEVEL_WARNING, "widgets: torch frame %d failed", i);
     }
   }
+  APP_LOG(APP_LOG_LEVEL_INFO, "widgets_init done: heap %u free",
+          (unsigned)heap_bytes_free());
 }
 
 void widgets_deinit(void) {

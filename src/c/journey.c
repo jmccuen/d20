@@ -161,11 +161,17 @@ void journey_init(Layer *layer, int32_t step_goal) {
   s_j.sleep_ended_at   = 0;
 
   s_mage_idle_1 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_IDLE_1);
+  if (!s_mage_idle_1) APP_LOG(APP_LOG_LEVEL_WARNING, "journey: mage_idle_1 failed");
   s_mage_idle_2 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_IDLE_2);
+  if (!s_mage_idle_2) APP_LOG(APP_LOG_LEVEL_WARNING, "journey: mage_idle_2 failed");
   s_mage_walk_1 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_WALK_1);
+  if (!s_mage_walk_1) APP_LOG(APP_LOG_LEVEL_WARNING, "journey: mage_walk_1 failed");
   s_mage_walk_2 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_WALK_2);
+  if (!s_mage_walk_2) APP_LOG(APP_LOG_LEVEL_WARNING, "journey: mage_walk_2 failed");
   s_mage_walk_3 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_WALK_3);
+  if (!s_mage_walk_3) APP_LOG(APP_LOG_LEVEL_WARNING, "journey: mage_walk_3 failed");
   s_camp        = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_CAMP);
+  if (!s_camp)        APP_LOG(APP_LOG_LEVEL_WARNING, "journey: camp failed");
 }
 
 void journey_deinit(void) {
