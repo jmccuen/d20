@@ -64,32 +64,38 @@ typedef struct {
 
 /* Vertices on the unit circumsphere (sqrt(3) circumradius in the
  * canonical construction, then divided through so we hit unit length).
- *   1 / sqrt(3) * 4096 ≈ 2365
- *   phi / sqrt(3) * 4096 ≈ 3826
- *   (1/phi) / sqrt(3) * 4096 ≈ 1462
- *
- * Indexing matches the convention used in the face derivation above. */
+ * The canonical positions
+ *   { ±2365, ±2365, ±2365 }   (8 cube corners)
+ *   { 0, ±1462, ±3826 }, { ±1462, ±3826, 0 }, { ±3826, 0, ±1462 }
+ * have been pre-rotated by Ry(-atan(1/phi)) ≈ Ry(-31.7°) so that face 0
+ * (originally normal (+1, 0, +phi)) now has all five vertices at z=3255
+ * — i.e. that face sits dead-on the camera at rest_x = rest_y = rest_z =
+ * 0. Without this baked rotation, the original table puts an edge of the
+ * dodecahedron toward the camera at rest, leaving two faces tied at
+ * nz=+phi with no single face front-most. The visible symptom was two
+ * pentagons at the top of the silhouette plus a thin sliver where a
+ * nearly-edge-on face peeked out. */
 static const Vec3 d12_verts[20] = {
-  { 2365,  2365,  2365}, /* 0  */
-  { 2365,  2365, -2365}, /* 1  */
-  { 2365, -2365,  2365}, /* 2  */
-  { 2365, -2365, -2365}, /* 3  */
-  {-2365,  2365,  2365}, /* 4  */
-  {-2365,  2365, -2365}, /* 5  */
-  {-2365, -2365,  2365}, /* 6  */
-  {-2365, -2365, -2365}, /* 7  */
-  {    0,  1462,  3826}, /* 8  */
-  {    0,  1462, -3826}, /* 9  */
-  {    0, -1462,  3826}, /* 10 */
-  {    0, -1462, -3826}, /* 11 */
-  { 1462,  3826,     0}, /* 12 */
-  { 1462, -3826,     0}, /* 13 */
-  {-1462,  3826,     0}, /* 14 */
-  {-1462, -3826,     0}, /* 15 */
-  { 3826,     0,  1462}, /* 16 */
-  { 3826,     0, -1462}, /* 17 */
-  {-3826,     0,  1462}, /* 18 */
-  {-3826,     0, -1462}, /* 19 */
+  {  768,  2365,  3255}, /* 0  */
+  { 3255,  2365,  -768}, /* 1  */
+  {  768, -2365,  3255}, /* 2  */
+  { 3255, -2365,  -768}, /* 3  */
+  {-3255,  2365,   768}, /* 4  */
+  { -768,  2365, -3255}, /* 5  */
+  {-3255, -2365,   768}, /* 6  */
+  { -768, -2365, -3255}, /* 7  */
+  {-2011,  1462,  3255}, /* 8  */
+  { 2011,  1462, -3255}, /* 9  */
+  {-2011, -1462,  3255}, /* 10 */
+  { 2011, -1462, -3255}, /* 11 */
+  { 1244,  3826,   769}, /* 12 */
+  { 1244, -3826,   769}, /* 13 */
+  {-1244,  3826,  -769}, /* 14 */
+  {-1244, -3826,  -769}, /* 15 */
+  { 2486,     0,  3255}, /* 16 */
+  { 4023,     0,   768}, /* 17 */
+  {-4023,     0,  -768}, /* 18 */
+  {-2486,     0, -3255}, /* 19 */
 };
 
 /* 12 faces. Vertex ordering is CCW when viewed from outside.
@@ -152,21 +158,29 @@ static const Face d12_faces[12] = {
  *   cos 252°  = -1259, sin 252°  = -3873
  *   cos 324°  =  3295, sin 324°  = -2395
  */
+/* Canonical placement has the top apex at (0,0,+4096) — pointing directly
+ * at the camera at rest. Five top kites would converge to a single point
+ * at the die center, fanning out like a pinwheel, none of them dead-on.
+ *
+ * Baked rotation: Rx(+54.16°) then Ry(-48.13°) puts top kite 0
+ * (apex / upper[0] / lower[0] / upper[1]) perpendicular to the camera at
+ * rest. Its centroid is now at (≈0, ≈0, 2896) and the face value (0)
+ * sits dead-on. */
 static const Vec3 d10_verts[12] = {
-  {    0,     0,  4096}, /*  0: top apex    */
-  {    0,     0, -4096}, /*  1: bottom apex */
-  /* upper belt (z = +432), angles 0/72/144/216/288 */
-  { 4073,     0,   432}, /*  2: upper[0] */
-  { 1259,  3873,   432}, /*  3: upper[1] */
-  {-3295,  2395,   432}, /*  4: upper[2] */
-  {-3295, -2395,   432}, /*  5: upper[3] */
-  { 1259, -3873,   432}, /*  6: upper[4] */
-  /* lower belt (z = -432), angles 36/108/180/252/324 */
-  { 3295,  2395,  -432}, /*  7: lower[0] */
-  {-1259,  3873,  -432}, /*  8: lower[1] */
-  {-4073,     0,  -432}, /*  9: lower[2] */
-  {-1259, -3873,  -432}, /* 10: lower[3] */
-  { 3295, -2395,  -432}, /* 11: lower[4] */
+  {-1785, -3320,  1602}, /*  0: top apex    */
+  { 1785,  3320, -1602}, /*  1: bottom apex */
+  /* upper belt */
+  { 2532,  -350,  3200}, /*  2: upper[0] */
+  {-1683,  1918,  3203}, /*  3: upper[1] */
+  {-3834,  1053,  -987}, /*  4: upper[2] */
+  { -945, -1753, -3580}, /*  5: upper[3] */
+  { 2989, -2619,  -991}, /*  6: upper[4] */
+  /* lower belt */
+  {  945,  1753,  3580}, /*  7: lower[0] */
+  {-2989,  2619,   991}, /*  8: lower[1] */
+  {-2532,   350, -3200}, /*  9: lower[2] */
+  { 1683, -1918, -3203}, /* 10: lower[3] */
+  { 3834, -1053,   987}, /* 11: lower[4] */
 };
 
 /* 10 kite faces. Top kite i has corners (top_apex, upper[i], lower[i],
