@@ -99,10 +99,10 @@ static bool s_warm;
  * app_timer fires face_on_tap every DEBUG_AUTO_ROLL_MS so the ceremonial
  * roll is visible without depending on the emulator's tap simulator.
  * Comment out for production builds. */
-/* No longer needed
+
 #define DEBUG_AUTO_ROLL
 #define DEBUG_AUTO_ROLL_MS 5000
-*/
+
 
 #ifdef DEBUG_AUTO_ROLL
 static AppTimer *s_debug_timer;
