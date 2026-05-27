@@ -27,7 +27,6 @@
 #define COLOR_TENT     PBL_IF_COLOR_ELSE(GColorBulgarianRose,    GColorDarkGray)
 #define COLOR_TREASURE PBL_IF_COLOR_ELSE(GColorChromeYellow,     GColorWhite)
 #define COLOR_BOSS     PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorDarkGray)
-#define COLOR_TOKEN    PBL_IF_COLOR_ELSE(GColorOxfordBlue,       GColorBlack)
 #define COLOR_FLAME    PBL_IF_COLOR_ELSE(GColorOrange,           GColorWhite)
 #define COLOR_LABEL    PBL_IF_COLOR_ELSE(GColorBulgarianRose,    GColorDarkGray)
 
@@ -48,10 +47,23 @@ static struct {
   int32_t   token_p_slide_start;
   Animation *slide_anim;
 
+  /* Walk-frame index 0..2 — set by slide_update from animation progress
+   * while a slide is in flight. Read by draw_token; ignored when no
+   * slide is active (idle frame used instead). */
+  int8_t    walk_frame_idx;
+
   /* Wake-rest label state. */
   time_t    sleep_started_at;
   time_t    sleep_ended_at;
 } s_j;
+
+/* Mage sprite frames. Loaded once in journey_init, released in
+ * journey_deinit. */
+static GBitmap *s_mage_idle_1;
+static GBitmap *s_mage_idle_2;  /* reserved for future idle cycle */
+static GBitmap *s_mage_walk_1;
+static GBitmap *s_mage_walk_2;
+static GBitmap *s_mage_walk_3;
 
 /* --- Slide animation ---------------------------------------------------- */
 
@@ -64,6 +76,12 @@ static void slide_update(Animation *anim, const AnimationProgress p) {
   int32_t span = s_j.token_p_target - s_j.token_p_slide_start;
   s_j.token_p_current = s_j.token_p_slide_start
                       + (int32_t)((int64_t)span * p / ANIMATION_NORMALIZED_MAX);
+
+  /* Walk cycle across the 3 frames over the slide duration. */
+  int idx = (int)((int64_t)p * 3 / ANIMATION_NORMALIZED_MAX);
+  if (idx > 2) idx = 2;
+  s_j.walk_frame_idx = (int8_t)idx;
+
   if (s_j.layer) layer_mark_dirty(s_j.layer);
 }
 
@@ -136,8 +154,15 @@ void journey_init(Layer *layer, int32_t step_goal) {
   s_j.token_p_current  = 0;
   s_j.token_p_target   = 0;
   s_j.slide_anim       = NULL;
+  s_j.walk_frame_idx   = 0;
   s_j.sleep_started_at = 0;
   s_j.sleep_ended_at   = 0;
+
+  s_mage_idle_1 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_IDLE_1);
+  s_mage_idle_2 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_IDLE_2);
+  s_mage_walk_1 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_WALK_1);
+  s_mage_walk_2 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_WALK_2);
+  s_mage_walk_3 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_WALK_3);
 }
 
 void journey_deinit(void) {
@@ -146,6 +171,11 @@ void journey_deinit(void) {
     s_j.slide_anim = NULL;
   }
   s_j.layer = NULL;
+  if (s_mage_walk_3) { gbitmap_destroy(s_mage_walk_3); s_mage_walk_3 = NULL; }
+  if (s_mage_walk_2) { gbitmap_destroy(s_mage_walk_2); s_mage_walk_2 = NULL; }
+  if (s_mage_walk_1) { gbitmap_destroy(s_mage_walk_1); s_mage_walk_1 = NULL; }
+  if (s_mage_idle_2) { gbitmap_destroy(s_mage_idle_2); s_mage_idle_2 = NULL; }
+  if (s_mage_idle_1) { gbitmap_destroy(s_mage_idle_1); s_mage_idle_1 = NULL; }
 }
 
 void journey_set_steps(int32_t steps) {
@@ -225,16 +255,37 @@ static void draw_boss(GContext *ctx, GPoint at) {
 }
 
 static void draw_token(GContext *ctx, GPoint at, bool sleeping) {
-  graphics_context_set_fill_color(ctx, COLOR_TOKEN);
-  graphics_fill_circle(ctx, at, 5);
-  graphics_context_set_stroke_color(ctx, COLOR_INK);
-  graphics_draw_circle(ctx, at, 5);
+  /* Frame pick:
+   *   - Sleeping: idle frame (mage at camp).
+   *   - Mid-slide: cycle the 3 walk frames keyed off slide progress.
+   *   - Otherwise: idle frame at the current position.
+   * Class is hardcoded to mage for now; selectable class silhouettes
+   * are Phase 5b. */
+  GBitmap *frame;
+  if (s_j.slide_anim && !sleeping) {
+    GBitmap *walks[3] = { s_mage_walk_1, s_mage_walk_2, s_mage_walk_3 };
+    int idx = s_j.walk_frame_idx;
+    if (idx < 0) idx = 0;
+    if (idx > 2) idx = 2;
+    frame = walks[idx];
+  } else {
+    frame = s_mage_idle_1;
+  }
+
+  if (frame) {
+    GSize size = gbitmap_get_bounds(frame).size;
+    GRect dest = GRect(at.x - size.w / 2,
+                       at.y - size.h / 2,
+                       size.w, size.h);
+    graphics_context_set_compositing_mode(ctx, GCompOpSet);
+    graphics_draw_bitmap_in_rect(ctx, frame, dest);
+  }
 
   if (sleeping) {
     graphics_context_set_text_color(ctx, COLOR_INK);
     graphics_draw_text(ctx, "Z",
       fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
-      GRect(at.x + 5, at.y - 16, 10, 14),
+      GRect(at.x + 8, at.y - 18, 10, 14),
       GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
   }
 }

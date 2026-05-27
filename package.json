@@ -25,7 +25,53 @@
       "configurable"
     ],
     "resources": {
-      "media": []
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_PARCHMENT_BG",
+          "file": "parchment/parchment.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_TOP_BANNER",
+          "file": "parchment/top_banner.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_FEATHER",
+          "file": "parchment/feather_icon.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MAGE_IDLE_1",
+          "file": "mage/idle_1.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MAGE_IDLE_2",
+          "file": "mage/idle_2.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MAGE_WALK_1",
+          "file": "mage/walk_1.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MAGE_WALK_2",
+          "file": "mage/walk_2.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MAGE_WALK_3",
+          "file": "mage/walk_3.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_TORCH_SHEET",
+          "file": "torch/torch.png"
+        }
+      ]
     }
   }
 }

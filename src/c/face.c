@@ -54,10 +54,15 @@ static FaceState s_state;
 #define COLOR_TRAY_FRAME PBL_IF_COLOR_ELSE(GColorWindsorTan,    GColorWhite)
 #define COLOR_TRAY_FELT  PBL_IF_COLOR_ELSE(GColorBulgarianRose, GColorBlack)
 
-static Layer *s_ribbon_layer;
-static Layer *s_dice_layer;
-static Layer *s_stats_layer;
-static Layer *s_journey_layer;
+static Layer       *s_ribbon_layer;
+static Layer       *s_dice_layer;
+static Layer       *s_stats_layer;
+static Layer       *s_journey_layer;
+
+/* Background parchment is a full-window static bitmap; sits below
+ * every other layer so each widget can compose over it. */
+static BitmapLayer *s_bg_layer;
+static GBitmap     *s_bg_bitmap;
 
 static Die s_hour_die;
 static Die s_tens_die;
@@ -139,8 +144,8 @@ void face_init(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
 
-  /* GColorPastelYellow is the closest parchment-cream in the 64-color
-   * palette. Tune by eye in the emulator. */
+  /* Fallback color in case the parchment bitmap fails to load — also
+   * shows during the initial frame before the bitmap layer paints. */
   window_set_background_color(window, PBL_IF_COLOR_ELSE(GColorPastelYellow, GColorWhite));
 
   /* Defaults — overwritten by the initial push from main.c */
@@ -156,6 +161,13 @@ void face_init(Window *window) {
    *   166 – 198  stat row       (32 px — heart with BPM, torch with %)
    *   198 – 228  journey strip  (30 px)
    * Sections butt up against each other without overlap. */
+
+  /* Parchment background — added first so it sits below every widget. */
+  s_bg_bitmap = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_PARCHMENT_BG);
+  s_bg_layer  = bitmap_layer_create(bounds);
+  bitmap_layer_set_bitmap(s_bg_layer, s_bg_bitmap);
+  bitmap_layer_set_compositing_mode(s_bg_layer, GCompOpSet);
+  layer_add_child(root, bitmap_layer_get_layer(s_bg_layer));
 
   /* Date ribbon along the top. */
   s_ribbon_layer = layer_create(GRect(0, 0, bounds.size.w, 28));
@@ -214,6 +226,8 @@ void face_init(Window *window) {
                s_hour_die.center, s_tens_die.center, s_ones_die.center,
                GRect(6, 6, bounds.size.w - 12, 138 - 12));
 
+  /* Sprite-owning modules load their bitmaps in their init. */
+  widgets_init();
   journey_init(s_journey_layer, s_state.step_goal);
   s_warm = false;
 
@@ -230,6 +244,7 @@ void face_deinit(void) {
   }
 #endif
   journey_deinit();
+  widgets_deinit();
   physics_deinit();
   tumble_deinit(&s_ones_tumble);
   tumble_deinit(&s_tens_tumble);
@@ -238,6 +253,8 @@ void face_deinit(void) {
   layer_destroy(s_stats_layer);
   layer_destroy(s_dice_layer);
   layer_destroy(s_ribbon_layer);
+  bitmap_layer_destroy(s_bg_layer);
+  gbitmap_destroy(s_bg_bitmap);
 }
 
 /* --- Event handlers ----------------------------------------------------- */

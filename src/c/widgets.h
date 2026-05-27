@@ -9,6 +9,12 @@
 
 #include <pebble.h>
 
+/* Load + cache the bitmap resources used by ribbon and stat-row draw
+ * functions. Must be called once after the window is created and
+ * before the first paint. widgets_deinit releases them. */
+void widgets_init(void);
+void widgets_deinit(void);
+
 void widgets_draw_ribbon(GContext *ctx, GRect bounds,
                          int16_t day_of_year, const char *date_str,
                          bool bluetooth);
