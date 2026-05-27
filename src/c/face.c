@@ -59,14 +59,13 @@ static Layer       *s_dice_layer;
 static Layer       *s_stats_layer;
 static Layer       *s_journey_layer;
 
-/* Background parchment. Painted by a regular Layer with an update_proc
- * — fills with a flat parchment color first (so something parchment-toned
- * is always visible), then overlays the bitmap on top if it loaded.
- * Earlier the BitmapLayer approach silently rendered nothing on the
- * emulator; this version makes the fallback explicit and easier to
- * debug if the bitmap still doesn't show. */
-static Layer   *s_bg_layer;
-static GBitmap *s_bg_bitmap;
+/* Background parchment. Currently a flat-color fill — the 200×228
+ * parchment bitmap was crashing the watch with an app fault, almost
+ * certainly OOM (the decoded bitmap is ~45 KB, which pushes us over
+ * the Emery app-heap budget once the other sprites are also loaded).
+ * The bitmap resource declaration stays in package.json so we can
+ * re-enable later via texture overlay or a smaller version. */
+static Layer *s_bg_layer;
 
 static Die s_hour_die;
 static Die s_tens_die;
@@ -108,16 +107,9 @@ static void debug_roll_fire(void *context) {
 
 static void bg_update(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
-  /* Flat parchment-tone fill: visible even if the bitmap fails. */
   graphics_context_set_fill_color(ctx,
     PBL_IF_COLOR_ELSE(GColorRajah, GColorWhite));
   graphics_fill_rect(ctx, bounds, 0, GCornerNone);
-  /* Overlay the bitmap on top — when it loads correctly it replaces
-   * the flat fill; when it doesn't, the flat fill carries the look. */
-  if (s_bg_bitmap) {
-    graphics_context_set_compositing_mode(ctx, GCompOpAssign);
-    graphics_draw_bitmap_in_rect(ctx, s_bg_bitmap, bounds);
-  }
 }
 
 static void dice_stage_update(Layer *layer, GContext *ctx) {
@@ -180,11 +172,10 @@ void face_init(Window *window) {
    *   198 – 228  journey strip  (30 px)
    * Sections butt up against each other without overlap. */
 
-  /* Parchment background — added first so it sits below every widget.
-   * The bitmap is overlaid on a flat parchment-tone fill in bg_update;
-   * see the static block at the top of this file for the rationale. */
-  s_bg_bitmap = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_PARCHMENT_BG);
-  s_bg_layer  = layer_create(bounds);
+  /* Background — flat-color fill (parchment-tone) added first so every
+   * widget composes over it. See the static block at the top of this
+   * file for why the bitmap is currently off. */
+  s_bg_layer = layer_create(bounds);
   layer_set_update_proc(s_bg_layer, bg_update);
   layer_add_child(root, s_bg_layer);
 
@@ -273,7 +264,6 @@ void face_deinit(void) {
   layer_destroy(s_dice_layer);
   layer_destroy(s_ribbon_layer);
   layer_destroy(s_bg_layer);
-  if (s_bg_bitmap) gbitmap_destroy(s_bg_bitmap);
 }
 
 /* --- Event handlers ----------------------------------------------------- */

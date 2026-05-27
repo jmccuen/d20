@@ -196,11 +196,18 @@ Heart and dice are deliberately deferred — both look right procedurally.
 **4a — Parchment background + ribbon** (pipeline tracer)
 - [x] Add resources to `package.json`: `IMAGE_PARCHMENT_BG` (200 × 228),
       `IMAGE_TOP_BANNER` (200 × 28), `IMAGE_FEATHER` (20 × 20)
-- [x] Draw bg under the window in `face_init` via a `BitmapLayer`
-      added first so it sits below every widget
 - [x] Draw banner + feather quill + (still-procedural) familiar in
       `widgets_draw_ribbon`, replacing the tapered-scroll polygon
-- [ ] Verify resource bundle size + runtime memory (do in emulator)
+- [-] **Parchment bitmap deferred.** Loading the 200×228 PNG caused an
+      app fault on device (PC 0x2e56, LR 0) — almost certainly OOM:
+      the decoded bitmap eats ~45 KB and pushes the app over Emery's
+      heap budget once the other sprites are also loaded. Current
+      `bg_update` fills with `GColorRajah` (a warm parchment tone in
+      Pebble's 64-color palette). `IMAGE_PARCHMENT_BG` resource is
+      kept in the bundle so we can re-enable later via:
+      (a) a smaller texture (e.g., 50 × 50) tiled,
+      (b) a thin border overlay only at the screen edges, or
+      (c) compiling the parchment in as raw PBI to skip a decode step.
 
 **4b — Torch sprite atlas**
 - [x] New `torch.png` is 128 × 32 — 4 frames of 32 × 32 in the order
