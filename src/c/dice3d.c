@@ -49,6 +49,14 @@
 #define MAX_VERTS      20
 #define MAX_FACE_VERTS 5
 
+/* Numeral colors. Placeholders until the settings page lands — both the
+ * resting color and the active-face highlight will be user-selectable
+ * (along with the die body palette). For now: black on every face,
+ * with the face whose label matches die->value tinted to make it read
+ * as "this is the current time". */
+#define COLOR_NUMERAL          GColorBlack
+#define COLOR_NUMERAL_ACTIVE   PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorBlack)
+
 typedef struct {
   int16_t x, y, z;
 } Vec3;
@@ -235,6 +243,25 @@ static Vec3 rotate_vertex(Vec3 v, int32_t rx, int32_t ry, int32_t rz) {
   return (Vec3){ .x = (int16_t)x3, .y = (int16_t)y3, .z = (int16_t)z2 };
 }
 
+/* Point-in-convex-polygon via signed cross product. The face polygons
+ * are convex (regular pentagons or kites); for a point inside, the sign
+ * of (edge × point-from-edge-start) is the same on every edge. Used to
+ * cull face numerals whose text box would overflow the face. */
+static bool point_in_convex_face(GPoint p, const GPoint *poly, int n) {
+  int sign = 0;
+  for (int i = 0; i < n; i++) {
+    GPoint a = poly[i];
+    GPoint b = poly[(i + 1) % n];
+    int32_t cross = (int32_t)(b.x - a.x) * (p.y - a.y)
+                  - (int32_t)(b.y - a.y) * (p.x - a.x);
+    if (cross == 0) continue;
+    int s = (cross > 0) ? 1 : -1;
+    if (sign == 0) sign = s;
+    else if (s != sign) return false;
+  }
+  return true;
+}
+
 static GPoint project(Vec3 v, GPoint center, int16_t radius) {
   /* Orthographic projection. y axis flips: 3D-y-up → screen-y-down. */
   return GPoint(
@@ -325,22 +352,26 @@ void dice3d_draw(GContext *ctx, const Die *die) {
 
   /* Walk faces: cull back-facing via real face normal, shade by n·light,
    * draw filled + outlined, then draw the face's baked numeral if its
-   * projection is large enough to read.
+   * text box fits inside the projected face polygon.
    *
-   * AREA_DOUBLE_MIN: projected 2× area below this culls the face. Below
-   * NUMERAL_AREA_DOUBLE_MIN the face is drawn but its numeral is skipped
-   * — the face is too tilted/small to fit a glyph cleanly. Both
-   * thresholds scale with the die radius so the same heuristic works
-   * for both the big hour die and the smaller minute dice. */
+   * AREA_DOUBLE_MIN culls visibly empty slivers entirely. Numeral
+   * placement is checked separately with a stricter test: all four
+   * corners of the text box must lie inside the face polygon — too
+   * tilted, too small, or shape doesn't fit means the glyph would spill
+   * onto the neighbour face. In that case we draw the face but skip the
+   * numeral. */
   #define AREA_DOUBLE_MIN 80
-  int32_t numeral_area_double_min = (int32_t)die->radius * die->radius / 2;
 
   GColor  outline = GColorBlack;
   GFont   font    = (die->type == DIE_HOUR)
     ? fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD)
     : fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
-  int16_t box_w   = (die->type == DIE_HOUR) ? 24 : 18;
-  int16_t box_h   = (die->type == DIE_HOUR) ? 20 : 16;
+  /* Box sized to fit the widest face value: "12" on the hour die, "9"
+   * on the minute dice. The tight fit is intentional — the
+   * point-in-polygon check uses these box dimensions to cull glyphs
+   * that would overflow their face. */
+  int16_t box_w   = (die->type == DIE_HOUR) ? 22 : 12;
+  int16_t box_h   = (die->type == DIE_HOUR) ? 18 : 14;
 
   for (int f = 0; f < n_faces; f++) {
     const Face *face = &faces[f];
@@ -406,14 +437,9 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     gpath_draw_outline(ctx, path);
     gpath_destroy(path);
 
-    /* Numeral. Skip on faces too tilted/small to host a glyph. The face
-     * value (face->value) is the polyhedron's baked label — by combining
-     * with the per-value rest rotation above, the face labeled die->value
-     * lands dead-on at rest. Every other visible face shows its own
-     * label, so the die reads like a real die instead of one floating
-     * number. */
-    if (area_2x < numeral_area_double_min) continue;
-
+    /* Numeral. face->value is the polyhedron's baked label; combined
+     * with the per-value rest rotation above, the face labeled
+     * die->value lands dead-on at rest. */
     int32_t px = 0, py = 0;
     for (int k = 0; k < face->n; k++) {
       px += face_pts[k].x;
@@ -422,15 +448,33 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     px /= face->n;
     py /= face->n;
 
+    /* Skip if the text box would overflow the projected face polygon.
+     * Test all four corners against the face's edges — any corner
+     * outside means the glyph spills onto a neighbour. */
+    GPoint box_corners[4] = {
+      { (int16_t)(px - box_w / 2), (int16_t)(py - box_h / 2) },
+      { (int16_t)(px + box_w / 2), (int16_t)(py - box_h / 2) },
+      { (int16_t)(px + box_w / 2), (int16_t)(py + box_h / 2) },
+      { (int16_t)(px - box_w / 2), (int16_t)(py + box_h / 2) },
+    };
+    bool fits = true;
+    for (int k = 0; k < 4; k++) {
+      if (!point_in_convex_face(box_corners[k], face_pts, face->n)) {
+        fits = false;
+        break;
+      }
+    }
+    if (!fits) continue;
+
     char buf[4];
     snprintf(buf, sizeof(buf), "%d", (int)face->value);
-    /* Adapt text color to face shading. The two darkest shades render
-     * black text illegibly; white reads cleanly on both light and dark. */
-#if defined(PBL_COLOR)
-    GColor text = (bright > 0) ? GColorBlack : GColorWhite;
-#else
-    GColor text = GColorBlack;
-#endif
+    /* Highlight the face whose label matches die->value — that's the
+     * one sitting dead-on at rest, and the user reads the time off of
+     * it. Tinting it draws the eye away from the surrounding context
+     * numerals. */
+    GColor text = (face->value == die->value)
+      ? COLOR_NUMERAL_ACTIVE
+      : COLOR_NUMERAL;
     graphics_context_set_text_color(ctx, text);
     graphics_draw_text(ctx, buf, font,
       GRect(px - box_w / 2, py - box_h / 2 - 1, box_w, box_h),
