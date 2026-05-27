@@ -6,11 +6,18 @@
  * on the first frame. Rotation uses Pebble's TRIG_MAX_ANGLE units, with
  * angular velocity in TRIG_MAX_ANGLE units per frame.
  *
- * The animation is one Pebble Animation with linear curve. Pebble drives
- * the update handler each frame; we treat the update as a fixed-step
- * physics tick. No sub-stepping — the dice are big enough relative to
- * the tray that simple per-frame integration handles wall and die-die
- * collisions cleanly.
+ * One continuous integration phase, no hard "return to home" switch.
+ * Each frame applies a spring force toward the rest position whose
+ * strength ramps linearly with animation progress. Early in the throw
+ * the spring is near zero (free flight); by the end it's strong enough
+ * to pull the dice all the way home through residual velocity. Rotation
+ * follows the same pattern — angular velocity damps continuously while
+ * the rotation magnitude itself eases toward zero, scaled with progress.
+ *
+ * This replaces an earlier two-phase scheme (free physics for 70%, then
+ * zero-velocity-and-lerp). The phase switch hard-killed momentum, which
+ * read as the dice "warping" back to their rest positions instead of
+ * rolling in.
  *
  * Die-die collisions use a coarse 1D elastic-collision approximation
  * along the contact normal: compute the (dx, dy) between centers,
@@ -28,7 +35,6 @@
 #include <stdlib.h>
 
 #define PHYSICS_DURATION_MS  1500
-#define RETURN_PHASE_PCT       70
 #define MAX_BODIES              3
 
 /* Position is stored as int32_t with the lower 8 bits as fractional pixels.
@@ -38,13 +44,23 @@
 /* Per-frame linear damping. v *= LIN_DAMP_N / 256. */
 #define LIN_DAMP_N  238  /* ≈ 0.93 */
 
-/* Per-frame angular damping. */
-#define ANG_DAMP_N  230  /* ≈ 0.90 — rotation decays a touch faster than translation */
+/* Per-frame angular damping for angular *velocity*. Rotation magnitude
+ * has its own progressive decay (see SPRING_MAX_N comment). */
+#define ANG_DAMP_N  230  /* ≈ 0.90 */
 
-/* Return-phase step. Each frame: pos += (rest - pos) * RET_STEP / 256;
- * rot *= (256 - RET_STEP) / 256. After ~13 frames of phase 2 (≈450 ms),
- * position is within ~2% of rest and rotation is effectively zero. */
-#define RET_STEP    64   /* 1/4 per frame */
+/* Spring strength toward home, scaled with progress. The actual per-frame
+ * spring is `pct * SPRING_MAX_N / 100` so it grows linearly from 0 at the
+ * start of the throw (free flight) to SPRING_MAX_N at the end. With
+ * SPRING_MAX_N = 10 a body 100 px from home gets a ~4 px/frame velocity
+ * change at p=1, which combined with damping pulls it all the way home
+ * before the animation ends. */
+#define SPRING_MAX_N   10
+
+/* Rotation magnitude decay also scales with progress: each frame
+ * `rot *= (256 - pct * ROT_DECAY_MAX_N / 100) / 256`. At p=0 there's no
+ * decay (the polyhedron tumbles freely); by p=1 the rotation is shrinking
+ * by ~20% per frame, so the leftover at teardown snaps invisibly. */
+#define ROT_DECAY_MAX_N 50
 
 /* Throw velocity ranges. Stored in 256× units so 256 = 1 px/frame.
  * VEL_MIN guards against a die getting a near-zero initial velocity and
@@ -105,7 +121,18 @@ static int32_t rand_throw_ang(void) {
 
 /* --- Per-frame physics ------------------------------------------------- */
 
-static void integrate_and_walls(Body *b) {
+static void integrate_body(Body *b, int32_t pct) {
+  /* Spring force toward home. Strength scales with `pct` so the dice
+   * have free flight early, then are progressively pulled back. By
+   * p=100% the spring is strong enough that residual velocity is
+   * pointing home anyway, and the body settles smoothly. */
+  int32_t spring = (pct * SPRING_MAX_N) / 100;
+  int32_t target_x = (int32_t)b->rest_x * POS_SCALE;
+  int32_t target_y = (int32_t)b->rest_y * POS_SCALE;
+  b->vx += (target_x - b->pos_x) * spring / 256;
+  b->vy += (target_y - b->pos_y) * spring / 256;
+
+  /* Integrate position from velocity. */
   b->pos_x += b->vx;
   b->pos_y += b->vy;
 
@@ -115,7 +142,6 @@ static void integrate_and_walls(Body *b) {
   int32_t max_x = (int32_t)(s_bounds.origin.x + s_bounds.size.w  - r) * POS_SCALE;
   int32_t min_y = (int32_t)(s_bounds.origin.y + r) * POS_SCALE;
   int32_t max_y = (int32_t)(s_bounds.origin.y + s_bounds.size.h - r) * POS_SCALE;
-
   if (b->pos_x < min_x) { b->pos_x = min_x; b->vx = -b->vx; }
   if (b->pos_x > max_x) { b->pos_x = max_x; b->vx = -b->vx; }
   if (b->pos_y < min_y) { b->pos_y = min_y; b->vy = -b->vy; }
@@ -125,14 +151,24 @@ static void integrate_and_walls(Body *b) {
   b->vx = b->vx * LIN_DAMP_N / 256;
   b->vy = b->vy * LIN_DAMP_N / 256;
 
-  /* Rotation. Pebble's sin/cos lookups handle large/negative angles, so
-   * we don't need to wrap rot_x/y/z explicitly. */
+  /* Rotation. Pebble's sin/cos lookups handle large/negative angles,
+   * so we don't need to wrap rot_x/y/z explicitly. */
   b->die->rot_x += b->wx;
   b->die->rot_y += b->wy;
   b->die->rot_z += b->wz;
+
+  /* Angular velocity damping. */
   b->wx = b->wx * ANG_DAMP_N / 256;
   b->wy = b->wy * ANG_DAMP_N / 256;
   b->wz = b->wz * ANG_DAMP_N / 256;
+
+  /* Rotation magnitude decay. Inactive at p=0 (free tumble), strongest
+   * at p=100% (rotation is shrinking by ~20% per frame so the leftover
+   * at teardown snaps invisibly). */
+  int32_t rot_decay = 256 - (pct * ROT_DECAY_MAX_N) / 100;
+  b->die->rot_x = b->die->rot_x * rot_decay / 256;
+  b->die->rot_y = b->die->rot_y * rot_decay / 256;
+  b->die->rot_z = b->die->rot_z * rot_decay / 256;
 }
 
 static void resolve_die_die(Body *a, Body *b) {
@@ -191,68 +227,29 @@ static void resolve_die_die(Body *a, Body *b) {
   b->vy -= impulse_y;
 }
 
-static void lerp_toward_home(Body *b) {
-  int32_t target_x = (int32_t)b->rest_x * POS_SCALE;
-  int32_t target_y = (int32_t)b->rest_y * POS_SCALE;
-  b->pos_x += (target_x - b->pos_x) * RET_STEP / 256;
-  b->pos_y += (target_y - b->pos_y) * RET_STEP / 256;
-
-  /* Decay rotation toward zero. */
-  b->die->rot_x = b->die->rot_x * (256 - RET_STEP) / 256;
-  b->die->rot_y = b->die->rot_y * (256 - RET_STEP) / 256;
-  b->die->rot_z = b->die->rot_z * (256 - RET_STEP) / 256;
-
-  /* Stop integrating velocity in phase 2 — the lerp takes over. Damp
-   * residual angular velocity hard so it doesn't keep pushing rotation
-   * away from zero. */
-  b->vx = 0;
-  b->vy = 0;
-  b->wx = b->wx * (256 - RET_STEP) / 256;
-  b->wy = b->wy * (256 - RET_STEP) / 256;
-  b->wz = b->wz * (256 - RET_STEP) / 256;
-}
-
 /* --- Animation hooks --------------------------------------------------- */
 
-static void anim_setup(Animation *anim) {
-  (void)anim;
-  APP_LOG(APP_LOG_LEVEL_INFO, "physics anim_setup");
-}
-
-static int s_update_count = 0;
+static void anim_setup(Animation *anim) { (void)anim; }
 
 static void anim_update(Animation *anim, AnimationProgress p) {
   (void)anim;
-  if (s_update_count < 3) {
-    APP_LOG(APP_LOG_LEVEL_INFO, "physics anim_update #%d, p=%ld",
-            s_update_count, (long)p);
-    s_update_count++;
-  }
   int32_t pct = (int32_t)p * 100 / ANIMATION_NORMALIZED_MAX;
 
   for (int i = 0; i < MAX_BODIES; i++) {
     Body *b = &s_bodies[i];
     if (!b->die) continue;
-
-    if (pct < RETURN_PHASE_PCT) {
-      integrate_and_walls(b);
-    } else {
-      lerp_toward_home(b);
-    }
+    integrate_body(b, pct);
   }
 
-  if (pct < RETURN_PHASE_PCT) {
-    if (s_update_count <= 3)
-      APP_LOG(APP_LOG_LEVEL_INFO, "physics about to resolve_die_die");
-    for (int i = 0; i < MAX_BODIES; i++) {
-      for (int j = i + 1; j < MAX_BODIES; j++) {
-        if (s_bodies[i].die && s_bodies[j].die) {
-          resolve_die_die(&s_bodies[i], &s_bodies[j]);
-        }
+  /* Die-die collisions throughout — the spring forces are gentle
+   * enough at the start that bodies can still bounce off each other,
+   * and as they converge on their homes they stop colliding naturally. */
+  for (int i = 0; i < MAX_BODIES; i++) {
+    for (int j = i + 1; j < MAX_BODIES; j++) {
+      if (s_bodies[i].die && s_bodies[j].die) {
+        resolve_die_die(&s_bodies[i], &s_bodies[j]);
       }
     }
-    if (s_update_count <= 3)
-      APP_LOG(APP_LOG_LEVEL_INFO, "physics resolve_die_die done");
   }
 
   /* Push integrated state back to the Die structs. */
@@ -268,9 +265,6 @@ static void anim_update(Animation *anim, AnimationProgress p) {
 
 static void anim_teardown(Animation *anim) {
   (void)anim;
-  APP_LOG(APP_LOG_LEVEL_INFO, "physics anim_teardown: heap %u free",
-          (unsigned)heap_bytes_free());
-  s_update_count = 0;
   /* Snap to exact rest pose so the static face has clean values to display. */
   for (int i = 0; i < MAX_BODIES; i++) {
     Body *b = &s_bodies[i];
@@ -364,8 +358,6 @@ void physics_throw(int16_t hour_value, int16_t tens_value, int16_t ones_value) {
   }
 
   Animation *anim = animation_create();
-  APP_LOG(APP_LOG_LEVEL_INFO, "physics_throw: anim=%p heap %u free",
-          anim, (unsigned)heap_bytes_free());
   if (!anim) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "physics_throw: animation_create returned NULL");
     return;
@@ -376,7 +368,6 @@ void physics_throw(int16_t hour_value, int16_t tens_value, int16_t ones_value) {
   animation_set_curve(anim, AnimationCurveLinear);
   s_anim = anim;
   animation_schedule(anim);
-  APP_LOG(APP_LOG_LEVEL_INFO, "physics_throw: scheduled");
 }
 
 bool physics_is_active(void) {
