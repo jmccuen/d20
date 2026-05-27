@@ -259,31 +259,31 @@ New feature work that sits naturally with the sprite phase. Sequence
 this after 4a–4c so the visual base is in.
 
 **Weather indicator**
-- [ ] Phone-side `src/pkjs/index.js` requests location via
-      `navigator.geolocation` and queries OpenWeatherMap (or
-      equivalent); sends temp + condition code back via `AppMessage`
-- [ ] Watch-side message keys: `WEATHER_TEMP_C`, `WEATHER_COND`
-- [ ] Render a small weather glyph (sun / cloud / rain) above the
-      journey path as a fourth milestone — diegetic, positioned along
-      the trail
-- [ ] Temperature shown numerically under the glyph (°F or °C per a
-      future setting)
+- [x] Phone-side `src/pkjs/index.js` requests location via
+      `navigator.geolocation` and queries Open-Meteo (no API key);
+      sends temperature back via `AppMessage` (`WEATHER_TEMP` key).
+- [x] `main.c` opens AppMessage with `app_message_register_inbox_received`
+      / `app_message_open(64, 64)`; dispatches to `face_on_weather` in
+      `face.c`.
+- [x] Cloud sprite + temperature rendered above the trail in `journey.c`.
+      Default `weather_temp = 22°C` shows until the first pkjs push.
+- [ ] Condition icon (sun / rain / snow variants of the cloud sprite)
+      and °F/°C unit selection deferred until settings ship.
 
 **Winding journey path**
-- [ ] Replace the straight dashed line in `journey.c` with a curve
-      (sine wave or a few cubic segments)
-- [ ] Token position becomes `(steps/goal) × arc_length` with x/y
-      interpolated along the curve
-- [ ] Milestones (camp / chest / weather / boss) snap to specific arc
-      positions on the curve
+- [x] Sine-wave curve in `journey.c` (`sine_y(x)`) replaces the straight
+      dashed line. Token x is `(steps/goal) × span`, y follows the
+      sine curve so the mage walks visibly up and down.
+- [x] Camp at trail start, trail-end sigil at trail end; milestones
+      live at fixed positions on the curve.
 
 **Numeric labels (diegetic, sparingly used)**
-- [ ] Battery % under the torch is already in. Confirmed.
-- [ ] Step count near the token or under the trailhead campfire, format
-      like `4,287`. Single small numeral, doesn't compete with the dice.
-- [ ] Temperature number under the weather glyph (per above).
-- [ ] All numeric labels use `GOTHIC_14_BOLD` for visual consistency
-      with the side-face dice numerals.
+- [x] Battery % inside the torch flame.
+- [x] Step count below the trail center, format `"245"` / `"1.2k"`.
+- [x] Temperature inside the cloud at top-center.
+- [x] Sleep hours under the campfire, polled per-minute from
+      `health_service_sum_today(HealthMetricSleepSeconds)`. Em-dash
+      when no data; `"6.2h"` format otherwise.
 
 ### Phase 5 — Configurables and theming
 

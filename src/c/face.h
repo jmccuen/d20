@@ -23,3 +23,6 @@ void face_on_health(HealthEventType event);
 
 void face_on_tap(AccelAxisType axis, int32_t direction);
 void face_on_bluetooth(bool connected);
+
+/* Weather temperature in degrees Celsius, pushed from PebbleKit JS. */
+void face_on_weather(int16_t temp_c);

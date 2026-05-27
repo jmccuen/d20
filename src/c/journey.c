@@ -53,9 +53,13 @@ static struct {
    * slide is active (idle frame used instead). */
   int8_t    walk_frame_idx;
 
-  /* Wake-rest label state. */
+  /* Sleep tracking. sleep_started_at / sleep_ended_at drive the
+   * "currently sleeping" state from HealthEventSleepUpdate events;
+   * sleep_secs is today's cumulative sleep, polled per-minute from
+   * HealthMetricSleepSeconds and shown under the campfire. */
   time_t    sleep_started_at;
   time_t    sleep_ended_at;
+  int32_t   sleep_secs;
 } s_j;
 
 /* Sprite assets. Loaded once in journey_init, released in journey_deinit. */
@@ -224,6 +228,12 @@ void journey_set_sleeping(bool sleeping) {
   retarget(SLIDE_SLEEP_MS);
 }
 
+void journey_set_sleep_seconds(int32_t seconds) {
+  if (seconds == s_j.sleep_secs) return;
+  s_j.sleep_secs = seconds;
+  if (s_j.layer) layer_mark_dirty(s_j.layer);
+}
+
 /* --- Helpers ------------------------------------------------------------ */
 
 /* Sine y-position for a given x along the trail.
@@ -248,15 +258,14 @@ static void format_steps(int32_t steps, char *buf, size_t buf_size) {
   }
 }
 
-/* "—" when no completed sleep yet, otherwise "6.2h". */
+/* "—" when no sleep data yet today, otherwise "6.2h". Reads the
+ * cumulative seconds pushed in by face_on_tick's HealthService poll. */
 static void format_sleep_hours(char *buf, size_t buf_size) {
-  if (s_j.sleep_ended_at <= s_j.sleep_started_at ||
-      s_j.sleep_started_at == 0) {
+  if (s_j.sleep_secs <= 0) {
     snprintf(buf, buf_size, "\xE2\x80\x94");  /* em dash */
     return;
   }
-  int32_t secs = (int32_t)(s_j.sleep_ended_at - s_j.sleep_started_at);
-  int32_t deci_h = (secs * 10) / 3600;
+  int32_t deci_h = (s_j.sleep_secs * 10) / 3600;
   snprintf(buf, buf_size, "%ld.%ldh",
            (long)(deci_h / 10), (long)(deci_h % 10));
 }

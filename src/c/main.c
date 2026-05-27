@@ -37,6 +37,18 @@ static void connection_handler(bool connected) {
   face_on_bluetooth(connected);
 }
 
+/* AppMessage inbox — pkjs pushes weather via WEATHER_TEMP. */
+static void inbox_received(DictionaryIterator *iter, void *context) {
+  Tuple *temp_t = dict_find(iter, MESSAGE_KEY_WEATHER_TEMP);
+  if (temp_t) {
+    face_on_weather((int16_t)temp_t->value->int32);
+  }
+}
+
+static void inbox_dropped(AppMessageResult reason, void *context) {
+  APP_LOG(APP_LOG_LEVEL_WARNING, "AppMessage dropped: %d", reason);
+}
+
 /* --- Window lifecycle --------------------------------------------------- */
 
 static void prv_window_load(Window *window) {
@@ -71,6 +83,12 @@ static void prv_init(void) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "HealthService subscription failed");
   }
 #endif
+
+  /* AppMessage subscription for weather updates from pkjs. Small
+   * buffers — we currently send a single int per message. */
+  app_message_register_inbox_received(inbox_received);
+  app_message_register_inbox_dropped(inbox_dropped);
+  app_message_open(64, 64);
 
   /* Push current state so layers render with real data on first paint. */
   face_on_battery(battery_state_service_peek());

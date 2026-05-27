@@ -18,7 +18,8 @@
       "CLASS",
       "FAMILIAR",
       "STEP_GOAL",
-      "SLEEP_OVERRIDE"
+      "SLEEP_OVERRIDE",
+      "WEATHER_TEMP"
     ],
     "capabilities": [
       "health",

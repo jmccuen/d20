@@ -26,6 +26,11 @@ void journey_set_steps(int32_t steps);
 void journey_set_goal(int32_t goal);
 void journey_set_sleeping(bool sleeping);
 
+/* Today's total sleep duration in seconds, summed from HealthService.
+ * Drives the "6.2h" label under the campfire. 0 means no sleep data
+ * yet (rendered as an em-dash). */
+void journey_set_sleep_seconds(int32_t seconds);
+
 /* Draws the info-area content (sine-wave trail, camp + sleep hours,
  * cloud + temp, mage on trail, step count). Heart and torch are drawn
  * separately by widgets_draw_heart / widgets_draw_torch which the

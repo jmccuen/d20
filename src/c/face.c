@@ -99,8 +99,10 @@ static bool s_warm;
  * app_timer fires face_on_tap every DEBUG_AUTO_ROLL_MS so the ceremonial
  * roll is visible without depending on the emulator's tap simulator.
  * Comment out for production builds. */
+/* No longer needed
 #define DEBUG_AUTO_ROLL
 #define DEBUG_AUTO_ROLL_MS 5000
+*/
 
 #ifdef DEBUG_AUTO_ROLL
 static AppTimer *s_debug_timer;
@@ -367,11 +369,14 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
     layer_mark_dirty(s_ribbon_layer);
   }
 
-  /* Poll steps each minute — cheap. journey.c will slide the token if the
-   * value actually changed. */
+  /* Poll steps + sleep totals each minute — both are cheap reads.
+   * journey.c will slide the token if steps changed and rerender the
+   * sleep-hours label if the sum changed. */
 #if defined(PBL_HEALTH)
   s_state.steps = (int32_t)health_service_sum_today(HealthMetricStepCount);
   journey_set_steps(s_state.steps);
+  journey_set_sleep_seconds(
+    (int32_t)health_service_sum_today(HealthMetricSleepSeconds));
 #endif
 
   s_warm = true;
@@ -439,4 +444,9 @@ void face_on_tap(AccelAxisType axis, int32_t direction) {
 void face_on_bluetooth(bool connected) {
   s_state.bluetooth = connected;
   layer_mark_dirty(s_ribbon_layer);
+}
+
+void face_on_weather(int16_t temp_c) {
+  s_state.weather_temp = temp_c;
+  layer_mark_dirty(s_info_layer);
 }
