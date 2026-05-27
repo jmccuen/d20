@@ -332,12 +332,22 @@ void dice3d_draw(GContext *ctx, const Die *die) {
   }
 
   /* Walk faces: cull back-facing via real face normal, shade by n·light,
-   * draw filled + outlined, then draw the face's baked numeral. The
-   * numeral cull is implicit: heavily tilted faces get killed by
-   * AREA_DOUBLE_MIN above the loop; everything else draws its glyph,
-   * with side faces using a smaller font + tighter box so they fit in
-   * the foreshortened polygon without overflowing. */
+   * draw filled + outlined, then draw the face's baked numeral.
+   *
+   * Numeral visibility:
+   *   - At rest (all rotation axes zero): only the face labeled
+   *     die->value draws its numeral, with the prominent "active" font
+   *     and the highlight color. Other visible faces stay blank — at
+   *     small projected sizes their glyphs overflow into neighbour
+   *     faces no matter how tight we make the box.
+   *   - While rotating (any rot_x/y/z non-zero — physics throw, hour
+   *     QUICK, minute SHAKE): every visible face draws its numeral
+   *     using the smaller "side" font. The active face keeps the
+   *     highlight color so you can see which value the die will settle
+   *     on as it tumbles.
+   * AREA_DOUBLE_MIN still culls near-edge-on slivers entirely. */
   #define AREA_DOUBLE_MIN 80
+  bool is_rolling = (die->rot_x != 0 || die->rot_y != 0 || die->rot_z != 0);
 
   GColor  outline = GColorBlack;
 
@@ -433,14 +443,21 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     px /= face->n;
     py /= face->n;
 
-    bool    is_active = (face->value == die->value);
-    GFont   fnt = is_active ? font_active : font_side;
-    int16_t bw  = is_active ? box_active_w : box_side_w;
-    int16_t bh  = is_active ? box_active_h : box_side_h;
+    bool is_active = (face->value == die->value);
+    /* At rest, only the active face shows its numeral. */
+    if (!is_rolling && !is_active) continue;
+
+    /* Big "prominent" font only for the active face at rest. While
+     * rolling, the active face is mid-tumble so the big font would
+     * read awkwardly — every face uses the smaller side font, and the
+     * highlight color is what makes the target value scannable. */
+    bool    use_active_glyph = is_active && !is_rolling;
+    GFont   fnt = use_active_glyph ? font_active  : font_side;
+    int16_t bw  = use_active_glyph ? box_active_w : box_side_w;
+    int16_t bh  = use_active_glyph ? box_active_h : box_side_h;
 
     char buf[4];
     snprintf(buf, sizeof(buf), "%d", (int)face->value);
-    /* Active face gets the highlight tint; everyone else is plain ink. */
     GColor text = is_active ? COLOR_NUMERAL_ACTIVE : COLOR_NUMERAL;
     graphics_context_set_text_color(ctx, text);
     graphics_draw_text(ctx, buf, fnt,
