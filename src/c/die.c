@@ -1,133 +1,19 @@
 /*
- * die.c — phase-1 procedural die rendering.
+ * die.c — single entry point for die rendering.
  *
- * The polygon shapes here are scaffolding only — they exist so every
- * downstream system (animation timing, value updates, layout, mark-dirty)
- * can be developed and tested without art.
+ * After Phase 2.5 step 3, settled and tumbling states both render through
+ * dice3d.c: settled is just a tumble at zero net rotation. The flat
+ * pentagon/kite primitives that previously drew the rest pose are gone —
+ * they made the settled die look weaker than the same die mid-tumble, and
+ * the visible quality drop at settle was the symptom.
  *
- * Phase 1 adds interior facet hints so the flat polygons read as projected
- * polyhedra: 3 spokes from the centroid on the hour pentagon (D12) and a
- * horizontal midline plus two angled facets on the minute kites (D10).
- *
- * Notes / known limitations:
- *  - GPath is allocated / freed inside the update_proc here for clarity.
- *    For production, cache the GPaths and update vertex positions in place,
- *    or just swap to sprites (Phase 4) where rotation is free.
- *  - The numeral is drawn upright on top of a rotating body. During a tumble
- *    the body spins under static text — looks engineer-ish, but is fine for
- *    tuning the animation timing. Sprites fix this naturally because the
- *    numeral is baked into the rotating bitmap.
+ * Sprite delivery (Phase 4) replaces this with graphics_draw_rotated_bitmap
+ * against per-value resources. The single-function boundary stays.
  */
 
 #include "die.h"
 #include "dice3d.h"
 
-#define COLOR_DIE_BODY    PBL_IF_COLOR_ELSE(GColorLightGray,   GColorWhite)
-#define COLOR_DIE_FLASH   PBL_IF_COLOR_ELSE(GColorIcterine,    GColorWhite)
-#define COLOR_DIE_OUTLINE GColorBlack
-#define COLOR_DIE_INK     GColorBlack
-#define COLOR_DIE_FACET   PBL_IF_COLOR_ELSE(GColorWindsorTan,  GColorDarkGray)
-
-#define HOUR_STROKE 3
-#define MIN_STROKE  2
-
-static GPoint rotated_vertex(GPoint c, int16_t r, int32_t a) {
-  int32_t s = sin_lookup(a);
-  int32_t k = cos_lookup(a);
-  return GPoint(c.x + (int16_t)(s * r / TRIG_MAX_RATIO),
-                c.y - (int16_t)(k * r / TRIG_MAX_RATIO));
-}
-
-static GPoint midpoint(GPoint a, GPoint b) {
-  return GPoint((a.x + b.x) / 2, (a.y + b.y) / 2);
-}
-
-static void draw_polygon(GContext *ctx, GPoint *pts, int n,
-                         GColor fill, GColor stroke, uint8_t stroke_w) {
-  GPathInfo info = { (uint32_t)n, pts };
-  GPath *p = gpath_create(&info);
-  graphics_context_set_fill_color(ctx, fill);
-  gpath_draw_filled(ctx, p);
-  graphics_context_set_stroke_color(ctx, stroke);
-  graphics_context_set_stroke_width(ctx, stroke_w);
-  gpath_draw_outline(ctx, p);
-  gpath_destroy(p);
-}
-
-static void draw_pentagon(GContext *ctx, GPoint c, int16_t r, int32_t rot, bool flash) {
-  GPoint pts[5];
-  for (int i = 0; i < 5; i++) {
-    int32_t a = rot + (TRIG_MAX_ANGLE * i / 5) - (TRIG_MAX_ANGLE / 4);
-    pts[i] = rotated_vertex(c, r, a);
-  }
-  GColor body = flash ? COLOR_DIE_FLASH : COLOR_DIE_BODY;
-  draw_polygon(ctx, pts, 5, body, COLOR_DIE_OUTLINE, HOUR_STROKE);
-
-  /* Three interior facet spokes from the centroid to alternate vertices.
-   * Pentagon has 5 vertices, so {0, 2, 4} hits three of the five — enough
-   * to suggest the dodecahedron's three visible facet seams. */
-  graphics_context_set_stroke_color(ctx, COLOR_DIE_FACET);
-  graphics_context_set_stroke_width(ctx, 1);
-  graphics_draw_line(ctx, c, pts[0]);
-  graphics_draw_line(ctx, c, pts[2]);
-  graphics_draw_line(ctx, c, pts[4]);
-}
-
-static void draw_kite(GContext *ctx, GPoint c, int16_t r, int32_t rot, bool flash) {
-  /* A simple 4-vertex diamond stands in for the prominent face of a d10.
-   * The shorter horizontal axis hints at the trapezohedron midline. */
-  GPoint pts[4];
-  pts[0] = rotated_vertex(c, r,             rot);                          /* top    */
-  pts[1] = rotated_vertex(c, r * 9 / 10,    rot + TRIG_MAX_ANGLE / 4);     /* right  */
-  pts[2] = rotated_vertex(c, r,             rot + TRIG_MAX_ANGLE / 2);     /* bottom */
-  pts[3] = rotated_vertex(c, r * 9 / 10,    rot + 3 * TRIG_MAX_ANGLE / 4); /* left   */
-  GColor body = flash ? COLOR_DIE_FLASH : COLOR_DIE_BODY;
-  draw_polygon(ctx, pts, 4, body, COLOR_DIE_OUTLINE, MIN_STROKE);
-
-  /* Interior facets: trapezohedron midline (left↔right) plus two angled
-   * seams from the top vertex down to the midpoints of the lower edges. */
-  graphics_context_set_stroke_color(ctx, COLOR_DIE_FACET);
-  graphics_context_set_stroke_width(ctx, 1);
-  graphics_draw_line(ctx, pts[3], pts[1]);
-  graphics_draw_line(ctx, pts[0], midpoint(pts[2], pts[3]));
-  graphics_draw_line(ctx, pts[0], midpoint(pts[2], pts[1]));
-}
-
-static void draw_face_number(GContext *ctx, const Die *die) {
-  char buf[4];
-  if (die->type == DIE_TENS) {
-    /* tens die labels are 00, 10, 20, 30, 40, 50 */
-    snprintf(buf, sizeof(buf), "%d0", die->value);
-  } else {
-    snprintf(buf, sizeof(buf), "%d", die->value);
-  }
-
-  GFont font = (die->type == DIE_HOUR)
-    ? fonts_get_system_font(FONT_KEY_LECO_38_BOLD_NUMBERS)
-    : fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-
-  GRect text_box = GRect(die->center.x - die->radius,
-                         die->center.y - die->radius / 2 - 2,
-                         die->radius * 2, die->radius);
-  graphics_context_set_text_color(ctx, COLOR_DIE_INK);
-  graphics_draw_text(ctx, buf, font, text_box,
-                     GTextOverflowModeWordWrap,
-                     GTextAlignmentCenter, NULL);
-}
-
 void die_draw(GContext *ctx, const Die *die) {
-  /* During a FULL/QUICK tumble, hand off to the procedural 3D
-   * polyhedron renderer. The hard-cut back to the flat settled
-   * rendering happens when tumble.c clears Die.tumbling on settle. */
-  if (die->tumbling) {
-    dice3d_draw(ctx, die);
-    return;
-  }
-
-  if (die->type == DIE_HOUR) {
-    draw_pentagon(ctx, die->center, die->radius, die->rotation, die->flash);
-  } else {
-    draw_kite(ctx, die->center, die->radius, die->rotation, die->flash);
-  }
-  draw_face_number(ctx, die);
+  dice3d_draw(ctx, die);
 }

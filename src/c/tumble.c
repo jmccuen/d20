@@ -7,7 +7,7 @@
  *
  * Each Animation is auto-destroyed when stopped (Pebble default), so the
  * teardown handler is the canonical "settle" point: it forces the die to
- * the target value, clears rotation and flash, and nulls h->anim.
+ * the target value, clears Euler angles and flash, and nulls h->anim.
  */
 
 #include "tumble.h"
@@ -57,12 +57,16 @@ static void tumble_update(Animation *anim, const AnimationProgress p) {
   Die *die = h->die;
 
   if (h->kind == TUMBLE_SHAKE) {
-    /* Damped sine wobble in 2D — the die is "already settled" and just
-     * quivers to the new value. dice3d isn't engaged for SHAKE. */
+    /* Damped sine wobble around the camera axis — the die has already
+     * landed on its new value and gives a small axial twist on settle.
+     * tumbling stays false so dice3d_draw paints the target value rather
+     * than whichever baked face the rotation happens to bring forward. */
     int32_t remaining = ANIMATION_NORMALIZED_MAX - p;
     int32_t ampl  = (int64_t)SHAKE_AMPL * remaining / ANIMATION_NORMALIZED_MAX;
     int32_t phase = (int64_t)p * 4 * TRIG_MAX_ANGLE / ANIMATION_NORMALIZED_MAX;
-    die->rotation = (int64_t)sin_lookup(phase) * ampl / TRIG_MAX_RATIO;
+    die->rot_x    = 0;
+    die->rot_y    = 0;
+    die->rot_z    = (int64_t)sin_lookup(phase) * ampl / TRIG_MAX_RATIO;
     die->value    = h->target_value;
     die->tumbling = false;
     die->flash    = false;
@@ -93,7 +97,6 @@ static void tumble_teardown(Animation *anim) {
   TumbleHandle *h = (TumbleHandle *)animation_get_context(anim);
   if (!h || !h->die || !h->layer) return;
   h->die->value    = h->target_value;
-  h->die->rotation = 0;
   h->die->rot_x    = 0;
   h->die->rot_y    = 0;
   h->die->rot_z    = 0;

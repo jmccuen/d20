@@ -150,8 +150,7 @@ void face_init(Window *window) {
     .center = GPoint(hour_r, hour_r),
     .radius = hour_r,
     .value  = 12,
-    .rotation = 0,
-    .type = DIE_HOUR,
+    .type   = DIE_HOUR,
   };
   layer_set_update_proc(s_hour_layer, hour_die_update);
   layer_add_child(root, s_hour_layer);
@@ -167,8 +166,7 @@ void face_init(Window *window) {
     .center = GPoint(min_r, min_r),
     .radius = min_r,
     .value  = 0,
-    .rotation = 0,
-    .type = DIE_TENS,
+    .type   = DIE_TENS,
   };
   layer_set_update_proc(s_tens_layer, tens_die_update);
   layer_add_child(root, s_tens_layer);
@@ -178,8 +176,7 @@ void face_init(Window *window) {
     .center = GPoint(min_r, min_r),
     .radius = min_r,
     .value  = 0,
-    .rotation = 0,
-    .type = DIE_ONES,
+    .type   = DIE_ONES,
   };
   layer_set_update_proc(s_ones_layer, ones_die_update);
   layer_add_child(root, s_ones_layer);

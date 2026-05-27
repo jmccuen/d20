@@ -2,10 +2,11 @@
  * tumble.h — per-die animation state.
  *
  * A TumbleHandle binds a Die + its Layer to a Pebble Animation. While the
- * animation is scheduled, an internal update procedure drives Die.rotation
- * (spin + ease-out settle), Die.value (face-value flicker), and Die.flash
- * (one-frame palette highlight on settle), marking the layer dirty each
- * tick.
+ * animation is scheduled, an internal update procedure drives Die.rot_x/y/z
+ * (3D spin for FULL/QUICK; an axial wobble on rot_z for SHAKE), Die.value
+ * (settled face), Die.tumbling (numeral source switch in dice3d), and
+ * Die.flash (one-frame palette highlight on settle), marking the layer
+ * dirty each tick.
  *
  * Three tumble kinds, each with its own duration / spin count / flicker
  * density:

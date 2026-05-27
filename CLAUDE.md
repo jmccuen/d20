@@ -30,7 +30,7 @@ All source is in `src/c/`. Module responsibilities are intentionally narrow; the
 |---|---|
 | `main.c` | App lifecycle, service subscriptions. Thin shims that forward every PebbleOS callback to a `face_on_*` function. Stays thin by design. |
 | `face.c` / `face.h` | `FaceState`, the layer tree, and event dispatch. Updates state, marks affected layers dirty, hands off to tumble/journey animations. |
-| `die.c` / `die.h` | `Die` struct + `die_draw`. Currently routes to `dice3d_draw` when `die->tumbling`, else draws flat pentagon/kite primitives. Sprite swap (Phase 4) is a single-file change. |
+| `die.c` / `die.h` | `Die` struct + `die_draw`. After Phase 2.5 step 3, `die_draw` is a one-liner that forwards to `dice3d_draw` for both tumbling and settled states (settled = zero net rotation). Sprite swap (Phase 4) replaces the body with `graphics_draw_rotated_bitmap`. |
 | `dice3d.c` / `dice3d.h` | Procedural 3D dodecahedron (D12, hour die) and pentagonal trapezohedron (D10, minute dice) for FULL/QUICK tumbles. Euler rotation → orthographic projection → 2D signed-area backface cull → 4-step flat shading. No depth buffer (convex + backface cull = no overdraw). |
 | `tumble.c` / `tumble.h` | Per-die animation state machine. Three kinds: `TUMBLE_FULL` (~600 ms ceremonial), `TUMBLE_QUICK` (~400 ms hour re-roll), `TUMBLE_SHAKE` (~100 ms minute settle). |
 | `journey.c` / `journey.h` | Bottom journey strip. Owns its own slide animations for step changes and sleep transitions. |
