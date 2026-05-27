@@ -375,14 +375,19 @@ void dice3d_draw(GContext *ctx, const Die *die) {
   cx /= front->n;
   cy /= front->n;
 
+  /* During a tumble (die->tumbling), show whatever face is currently
+   * front-facing — the baked-numeral flicker reads as the die turning.
+   * At rest, show the actual target value so settled rendering through
+   * this same path lands on the correct number regardless of which face
+   * the polyhedron happens to present dead-on. Step 3 of Phase 2.5 routes
+   * the settled draw here too, which is what makes this conditional load-
+   * bearing. */
+  int displayed = die->tumbling ? front->value : die->value;
   char buf[6];
   if (die->type == DIE_TENS) {
-    /* Tens die during tumble: show "00".."90" cycling. The baked
-     * face value 0-9 maps directly; the visible flicker doesn't need
-     * to land at the settle value (that's the cut to die_draw's job). */
-    snprintf(buf, sizeof(buf), "%d0", (int)front->value);
+    snprintf(buf, sizeof(buf), "%d0", displayed);
   } else {
-    snprintf(buf, sizeof(buf), "%d", (int)front->value);
+    snprintf(buf, sizeof(buf), "%d", displayed);
   }
 
   GFont font = (die->type == DIE_HOUR)
