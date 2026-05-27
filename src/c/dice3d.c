@@ -315,6 +315,14 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     gpath_destroy(path);
   }
 
+  /* At rest, the polyhedron is pre-rotated so face 0 sits dead-on (see
+   * the tables above). Pin the numeral to face 0 in that case — the
+   * loop's nz-tracking can pick a different face when two faces' normals
+   * tie or when integer projection rounding nudges nz, and the user
+   * sees the displayed value jump between adjacent faces frame to frame.
+   * During tumble we keep the loop's pick so the numeral flickers
+   * through whatever face the rotation brings forward. */
+  if (!die->tumbling) front_idx = 0;
   if (front_idx < 0) return;
 
   /* Numeral on the front face. Centroid in screen space. */
@@ -327,20 +335,13 @@ void dice3d_draw(GContext *ctx, const Die *die) {
   cx /= front->n;
   cy /= front->n;
 
-  /* During a tumble (die->tumbling), show whatever face is currently
-   * front-facing — the baked-numeral flicker reads as the die turning.
-   * At rest, show the actual target value so settled rendering through
-   * this same path lands on the correct number regardless of which face
-   * the polyhedron happens to present dead-on. Step 3 of Phase 2.5 routes
-   * the settled draw here too, which is what makes this conditional load-
-   * bearing. */
+  /* Tumbling die flickers through baked face labels; settled die shows
+   * die->value. Both minute dice now show a single 0..9 digit — the
+   * tens die used to print "%d0" (00, 10, ... 50) but that reads worse
+   * at the small minute-die size than just a single digit. */
   int displayed = die->tumbling ? front->value : die->value;
   char buf[6];
-  if (die->type == DIE_TENS) {
-    snprintf(buf, sizeof(buf), "%d0", displayed);
-  } else {
-    snprintf(buf, sizeof(buf), "%d", displayed);
-  }
+  snprintf(buf, sizeof(buf), "%d", displayed);
 
   GFont font = (die->type == DIE_HOUR)
     ? fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD)

@@ -50,13 +50,12 @@ All source is in `src/c/`. Module responsibilities are intentionally narrow; the
 
 ```
 0   – 28   ribbon (with familiar in corner)
-28  – 118  hour die  (90 px area, r=45)
-118 – 166  minute dice  (48 px area, r=24, two side-by-side)
-166 – 198  stat row  (heart + BPM, torch + %)
+28  – 166  dice stage (138 px — tray + all 3 dice in one shared layer)
+166 – 198  stat row (heart + BPM, torch + %)
 198 – 228  journey strip
 ```
 
-Sections butt up cleanly without overlap. Phase 2.5 (`Phase2.5.md`) plans to merge the three sibling die layers into one shared stage layer to enable visual overlap between dice — read that doc before touching `face.c`'s layer tree.
+Sections butt up cleanly without overlap. The dice stage is one shared layer (`s_dice_layer`) — Die.center is in stage-local coords. Any tumble marks the stage dirty and re-renders all three dice; the per-frame cost is small. The tray itself is drawn as polygons in `dice_stage_update`; a sprite is planned but not in yet (colors are placeholders).
 
 ## Planning docs
 

@@ -6,6 +6,14 @@
  * update_procs read from s_state and the static Die instances and dispatch
  * to the module's draw function.
  *
+ * Phase 2.5 step 4: the three sibling die layers (hour/tens/ones) collapsed
+ * into a single stage layer that draws the dice tray + all three dice. Any
+ * tumble marks the shared layer dirty and re-renders all three dice; the
+ * cost is small (three procedural polyhedra per frame, well within budget)
+ * and the architectural payoff is that dice can now overlap visually —
+ * the minute dice in the new layout sit in front of/behind each other in
+ * the tray.
+ *
  * Phase 2 wires animations:
  *   - Hour tick  → TUMBLE_QUICK on the hour die
  *   - Minute tick → TUMBLE_SHAKE on the tens/ones die that changed
@@ -40,10 +48,12 @@ typedef struct {
 
 static FaceState s_state;
 
+/* Dice tray placeholder colors. Polygon stand-in until a sprite lands. */
+#define COLOR_TRAY_FRAME PBL_IF_COLOR_ELSE(GColorWindsorTan,    GColorWhite)
+#define COLOR_TRAY_FELT  PBL_IF_COLOR_ELSE(GColorBulgarianRose, GColorBlack)
+
 static Layer *s_ribbon_layer;
-static Layer *s_hour_layer;
-static Layer *s_tens_layer;
-static Layer *s_ones_layer;
+static Layer *s_dice_layer;
 static Layer *s_stats_layer;
 static Layer *s_journey_layer;
 
@@ -85,15 +95,24 @@ static void debug_roll_fire(void *context) {
 
 /* --- Update procs ------------------------------------------------------- */
 
-static void hour_die_update(Layer *layer, GContext *ctx) {
+static void dice_stage_update(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+
+  /* Tray placeholder: outer wood/leather frame + darker felt interior.
+   * Replaced by a sprite later — kept as polygons so the layout reads
+   * during procedural development. */
+  graphics_context_set_fill_color(ctx, COLOR_TRAY_FRAME);
+  graphics_fill_rect(ctx, bounds, 6, GCornersAll);
+  graphics_context_set_fill_color(ctx, COLOR_TRAY_FELT);
+  graphics_fill_rect(ctx,
+    GRect(6, 6, bounds.size.w - 12, bounds.size.h - 12),
+    4, GCornersAll);
+
+  /* Order matters where dice overlap. The two minute dice sit close
+   * enough in the new layout that the ones die occludes part of the
+   * tens die — draw tens first so ones lands on top. */
   die_draw(ctx, &s_hour_die);
-}
-
-static void tens_die_update(Layer *layer, GContext *ctx) {
   die_draw(ctx, &s_tens_die);
-}
-
-static void ones_die_update(Layer *layer, GContext *ctx) {
   die_draw(ctx, &s_ones_die);
 }
 
@@ -131,8 +150,7 @@ void face_init(Window *window) {
 
   /* Vertical layout, 228 px total:
    *   0   – 28   ribbon         (28 px)
-   *   28  – 118  hour die area  (90 px, r=45)
-   *   118 – 166  minute dice    (48 px, r=24)
+   *   28  – 166  dice stage     (138 px — tray + all 3 dice)
    *   166 – 198  stat row       (32 px — heart with BPM, torch with %)
    *   198 – 228  journey strip  (30 px)
    * Sections butt up against each other without overlap. */
@@ -142,44 +160,32 @@ void face_init(Window *window) {
   layer_set_update_proc(s_ribbon_layer, ribbon_update);
   layer_add_child(root, s_ribbon_layer);
 
-  /* Hour die — large, centered upper area. */
-  const int16_t hour_r = 45;
-  s_hour_layer = layer_create(GRect(bounds.size.w / 2 - hour_r, 28,
-                                     hour_r * 2, hour_r * 2));
+  /* Dice stage — single shared layer hosting the tray + all three dice.
+   * Die.center is in stage-local coordinates. The hour die sits left of
+   * center as a "thrown" anchor; the two minute dice stack diagonally on
+   * the right so the ones die occludes part of the tens. */
+  s_dice_layer = layer_create(GRect(0, 28, bounds.size.w, 138));
+  layer_set_update_proc(s_dice_layer, dice_stage_update);
+  layer_add_child(root, s_dice_layer);
+
   s_hour_die = (Die){
-    .center = GPoint(hour_r, hour_r),
-    .radius = hour_r,
+    .center = GPoint(65, 60),
+    .radius = 40,
     .value  = 12,
     .type   = DIE_HOUR,
   };
-  layer_set_update_proc(s_hour_layer, hour_die_update);
-  layer_add_child(root, s_hour_layer);
-
-  /* Minute dice — two side by side below the hour. */
-  const int16_t min_r = 24;
-  int16_t tens_x = bounds.size.w * 30 / 100 - min_r;
-  int16_t ones_x = bounds.size.w * 70 / 100 - min_r;
-  int16_t min_y  = 118;
-
-  s_tens_layer = layer_create(GRect(tens_x, min_y, min_r * 2, min_r * 2));
   s_tens_die = (Die){
-    .center = GPoint(min_r, min_r),
-    .radius = min_r,
+    .center = GPoint(138, 42),
+    .radius = 22,
     .value  = 0,
     .type   = DIE_TENS,
   };
-  layer_set_update_proc(s_tens_layer, tens_die_update);
-  layer_add_child(root, s_tens_layer);
-
-  s_ones_layer = layer_create(GRect(ones_x, min_y, min_r * 2, min_r * 2));
   s_ones_die = (Die){
-    .center = GPoint(min_r, min_r),
-    .radius = min_r,
+    .center = GPoint(158, 88),
+    .radius = 22,
     .value  = 0,
     .type   = DIE_ONES,
   };
-  layer_set_update_proc(s_ones_layer, ones_die_update);
-  layer_add_child(root, s_ones_layer);
 
   /* Stats row — heart with BPM inside, torch with percent below. */
   s_stats_layer = layer_create(GRect(0, 166, bounds.size.w, 32));
@@ -192,9 +198,10 @@ void face_init(Window *window) {
   layer_set_update_proc(s_journey_layer, journey_update);
   layer_add_child(root, s_journey_layer);
 
-  tumble_init(&s_hour_tumble, &s_hour_die, s_hour_layer);
-  tumble_init(&s_tens_tumble, &s_tens_die, s_tens_layer);
-  tumble_init(&s_ones_tumble, &s_ones_die, s_ones_layer);
+  /* All three TumbleHandles bind to the shared stage layer. */
+  tumble_init(&s_hour_tumble, &s_hour_die, s_dice_layer);
+  tumble_init(&s_tens_tumble, &s_tens_die, s_dice_layer);
+  tumble_init(&s_ones_tumble, &s_ones_die, s_dice_layer);
   journey_init(s_journey_layer, s_state.step_goal);
   s_warm = false;
 
@@ -216,9 +223,7 @@ void face_deinit(void) {
   tumble_deinit(&s_hour_tumble);
   layer_destroy(s_journey_layer);
   layer_destroy(s_stats_layer);
-  layer_destroy(s_ones_layer);
-  layer_destroy(s_tens_layer);
-  layer_destroy(s_hour_layer);
+  layer_destroy(s_dice_layer);
   layer_destroy(s_ribbon_layer);
 }
 
@@ -239,7 +244,7 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
       tumble_start(&s_hour_tumble, TUMBLE_QUICK, new_hour, 0);
     } else {
       s_hour_die.value = new_hour;
-      layer_mark_dirty(s_hour_layer);
+      layer_mark_dirty(s_dice_layer);
     }
   }
 
@@ -252,7 +257,7 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
         tumble_start(&s_tens_tumble, TUMBLE_SHAKE, new_tens, 0);
       } else {
         s_tens_die.value = new_tens;
-        layer_mark_dirty(s_tens_layer);
+        layer_mark_dirty(s_dice_layer);
       }
     }
     if (s_ones_die.value != new_ones) {
@@ -260,7 +265,7 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
         tumble_start(&s_ones_tumble, TUMBLE_SHAKE, new_ones, 0);
       } else {
         s_ones_die.value = new_ones;
-        layer_mark_dirty(s_ones_layer);
+        layer_mark_dirty(s_dice_layer);
       }
     }
   }
