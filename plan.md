@@ -173,31 +173,103 @@ Replaces the in-plane 2D rotation during FULL / QUICK with a true 3D polyhedron 
 
 ### Phase 3 — Stub-sprite pipeline check
 
-Single tracer-bullet asset to de-risk the swap path.
+Single tracer-bullet asset to de-risk the swap path. **Note: probably folded
+into Phase 4a (parchment background) now — the procedural 3D dice are
+reading as intentional, so dice-face sprites are likely skipped. The
+parchment background does double duty as the pipeline tracer.**
 
-- [ ] Bake one placeholder PNG (flat gray pentagon with "X") into `resources/`
-- [ ] Wire through `package.json` → `gbitmap_create_with_resource`
-- [ ] Confirm `graphics_draw_rotated_bitmap` renders correctly during a tumble
-- [ ] Confirm resource memory budget is reasonable
+- [ ] Confirm `package.json` resource block accepts a `bitmap` entry and
+      builds without errors
+- [ ] Confirm `gbitmap_create_with_resource` returns a usable bitmap on
+      Pebble Time 2 and the resource memory budget is reasonable
 
-### Phase 4 — Sprite delivery (core)
+### Phase 4 — Sprite delivery
 
-Priority block — everything the watchface needs to look "shipped" before configurables.
+Ordered low-risk to higher, in the sequence we'll wire them. Procedural
+dice rendering stays — the 3D D12/D10 read as intentional D&D art and
+the per-value rest rotation plus highlight makes the current time read
+clearly. **Dice-face sprites are no longer planned.**
 
-- [ ] 28 dice face sprites (hour, tens, ones) per the sprite manifest
-- [ ] Heart sprite + 4 torch states + token base
-- [ ] Treasure chest, campfire idle, campfire lit, boss sigil
-- [ ] Swap `die_draw` body to call `graphics_draw_rotated_bitmap`
-- [ ] Strip polygon math from `die.c`
-- [ ] Wire heart, torch, milestone sprites into `widgets.c` and `journey.c`
-- [ ] Optional: static parchment background bitmap (200 × 228); keep procedural fill as fallback if memory is tight
-- [ ] Verify resource-bundle size and runtime memory
+Source folder is `resources/` (already populated for the first few items).
+Heart and dice are deliberately deferred — both look right procedurally.
+
+**4a — Parchment background + ribbon** (pipeline tracer)
+- [ ] Add `BG_PARCHMENT` (200 × 228) and `RIBBON_PARCHMENT` (~200 × 28)
+      to `package.json` resources
+- [ ] Crop/scale `resources/parchment/Worn-Parchment-BG-1.png` and
+      `Parchment-Roll.png` to target dimensions
+- [ ] Draw bg under the window in `face_init` (replacing
+      `window_set_background_color`)
+- [ ] Draw ribbon in `widgets_draw_ribbon` (replacing the tapered-scroll
+      polygon); keep procedural fallback wrapped behind a `#define` for
+      memory-tight builds
+- [ ] Verify resource bundle size + runtime memory
+
+**4b — Torch sprite atlas**
+- [ ] Add `torches.png` as a single resource; pick one color column
+      (default yellow/orange for Parchment theme)
+- [ ] In `widgets.c`, replace the polygon torch with a `gbitmap_create_as_sub_bitmap`
+      lookup keyed by battery bucket (full / half / embers / dark wick)
+- [ ] Leave handle as procedural or include in atlas — decide by eye
+
+**4c — Mage on the journey token**
+- [ ] Add idle frames (2) and walk frames (6) as separate `bitmap`
+      resources, named `MAGE_IDLE_1..2`, `MAGE_WALK_1..6`
+- [ ] In `journey.c`, drive frame selection from the slide animation: walk
+      cycle while the token is moving (during `journey_set_steps` slide),
+      idle cycle when stationary at camp; hold idle frame elsewhere
+- [ ] Token base circle stays procedural; the mage sprite renders on top
+
+**4d — Campfire**
+- [ ] Asset still needs sourcing (not in `resources/` yet). Two states:
+      idle tent (~14 × 14) and lit (~14 × 18, tent + flame).
+- [ ] Once sourced, wire into `journey.c` trailhead drawing
+
+**4e — Deferred / probably skip**
+- Heart sprite: procedural heart reads fine; defer to "Phase 4 polish".
+- Treasure chest, boss sigil: procedural milestones read fine; same.
+- Dice face sprites: no longer planned.
+
+### Phase 4.5 — Extended diegetic UI
+
+New feature work that sits naturally with the sprite phase. Sequence
+this after 4a–4c so the visual base is in.
+
+**Weather indicator**
+- [ ] Phone-side `src/pkjs/index.js` requests location via
+      `navigator.geolocation` and queries OpenWeatherMap (or
+      equivalent); sends temp + condition code back via `AppMessage`
+- [ ] Watch-side message keys: `WEATHER_TEMP_C`, `WEATHER_COND`
+- [ ] Render a small weather glyph (sun / cloud / rain) above the
+      journey path as a fourth milestone — diegetic, positioned along
+      the trail
+- [ ] Temperature shown numerically under the glyph (°F or °C per a
+      future setting)
+
+**Winding journey path**
+- [ ] Replace the straight dashed line in `journey.c` with a curve
+      (sine wave or a few cubic segments)
+- [ ] Token position becomes `(steps/goal) × arc_length` with x/y
+      interpolated along the curve
+- [ ] Milestones (camp / chest / weather / boss) snap to specific arc
+      positions on the curve
+
+**Numeric labels (diegetic, sparingly used)**
+- [ ] Battery % under the torch is already in. Confirmed.
+- [ ] Step count near the token or under the trailhead campfire, format
+      like `4,287`. Single small numeral, doesn't compete with the dice.
+- [ ] Temperature number under the weather glyph (per above).
+- [ ] All numeric labels use `GOTHIC_14_BOLD` for visual consistency
+      with the side-face dice numerals.
 
 ### Phase 5 — Configurables and theming
 
 **5a — Settings infrastructure**
-- [ ] PebbleKit JS settings page in `src/pkjs/index.js`
-- [ ] Message keys: `CLASS`, `FAMILIAR`, `STEP_GOAL`, `SLEEP_OVERRIDE`, `THEME`
+- [ ] PebbleKit JS settings page in `src/pkjs/index.js` (also hosts the
+      weather fetch from Phase 4.5)
+- [ ] Message keys: `CLASS`, `FAMILIAR`, `STEP_GOAL`, `SLEEP_OVERRIDE`,
+      `THEME`, `TEMP_UNIT_F` (°F vs °C), `DICE_INK_COLOR`,
+      `DICE_INK_ACTIVE_COLOR`, plus weather keys from 4.5
 - [ ] `persist_write_*` / `persist_read_*` on the watch
 - [ ] Settings re-apply on app launch and on app message receipt
 
@@ -230,6 +302,9 @@ Priority block — everything the watchface needs to look "shipped" before confi
 5. **HP framing.** BPM inside the heart with no max (current direction) vs. "72 / max" with a thematic ceiling. Confirm during on-wrist testing.
 6. **Sleep-end label timing.** Show "Xh Ym rest" for 2 h after waking, or until first user interaction?
 7. **Theme storage budget.** With 4 themes × ~12 colors each, theming is essentially free in memory. Custom-color storage would need careful `persist_write` planning if added later.
+8. **Dice-face sprites.** Currently planned to skip — procedural 3D dice with per-value rest rotation and per-face baked numerals look intentional and animate cleanly through physics. Revisit only if testing surfaces a specific reason (e.g., baked-art look the procedural can't match, or a CPU/battery cost we didn't anticipate).
+9. **Campfire art.** Not in `resources/` yet. Need 2-state asset (idle tent / lit tent + flame) — flag for sourcing.
+10. **Heart sprite.** Procedural reads fine. Skip unless theming requires a specific shape that's hard to draw with polygons.
 
 ## Color palette — Parchment preset (default)
 
@@ -262,7 +337,11 @@ Other presets (Midnight, Blood Moon, Frostfell) land in Phase 5c.
 | Tap                        | `accel_tap_service_subscribe(…)` |
 | Continuous accel (wrist-raise) | `accel_data_service_subscribe(…)` |
 | Bluetooth connection       | `connection_service_subscribe(…)` / `connection_service_peek_pebble_app_connection()` |
+| Load a bitmap resource     | `gbitmap_create_with_resource(RESOURCE_ID_*)`, paired with `gbitmap_destroy` |
+| Atlas / spritesheet sub-rect | `gbitmap_create_as_sub_bitmap(parent, sub_rect)` — no extra data copy |
+| Draw a bitmap              | `graphics_draw_bitmap_in_rect(ctx, bmp, dest_rect)` |
 | Rotate a bitmap            | `graphics_draw_rotated_bitmap(ctx, bmp, src_ic, angle, dest_ic)` |
+| Animated bitmap sequence   | `bitmap_sequence_create_with_resource(RESOURCE_ID_*)` (APNG) |
 | Fixed-point trig           | `sin_lookup`, `cos_lookup`, `TRIG_MAX_ANGLE`, `TRIG_MAX_RATIO` |
 | Polygons                   | `gpath_create`, `gpath_draw_filled`, `gpath_draw_outline` |
 | Animation                  | `animation_create()`, `animation_set_handlers`, `animation_set_duration`, `animation_schedule` |

@@ -243,25 +243,6 @@ static Vec3 rotate_vertex(Vec3 v, int32_t rx, int32_t ry, int32_t rz) {
   return (Vec3){ .x = (int16_t)x3, .y = (int16_t)y3, .z = (int16_t)z2 };
 }
 
-/* Point-in-convex-polygon via signed cross product. The face polygons
- * are convex (regular pentagons or kites); for a point inside, the sign
- * of (edge × point-from-edge-start) is the same on every edge. Used to
- * cull face numerals whose text box would overflow the face. */
-static bool point_in_convex_face(GPoint p, const GPoint *poly, int n) {
-  int sign = 0;
-  for (int i = 0; i < n; i++) {
-    GPoint a = poly[i];
-    GPoint b = poly[(i + 1) % n];
-    int32_t cross = (int32_t)(b.x - a.x) * (p.y - a.y)
-                  - (int32_t)(b.y - a.y) * (p.x - a.x);
-    if (cross == 0) continue;
-    int s = (cross > 0) ? 1 : -1;
-    if (sign == 0) sign = s;
-    else if (s != sign) return false;
-  }
-  return true;
-}
-
 static GPoint project(Vec3 v, GPoint center, int16_t radius) {
   /* Orthographic projection. y axis flips: 3D-y-up → screen-y-down. */
   return GPoint(
@@ -351,28 +332,31 @@ void dice3d_draw(GContext *ctx, const Die *die) {
   }
 
   /* Walk faces: cull back-facing via real face normal, shade by n·light,
-   * draw filled + outlined, then draw the face's baked numeral if its
-   * text box fits inside the projected face polygon.
-   *
-   * AREA_DOUBLE_MIN culls visibly empty slivers entirely. Numeral
-   * placement is checked separately with a stricter test: all four
-   * corners of the text box must lie inside the face polygon — too
-   * tilted, too small, or shape doesn't fit means the glyph would spill
-   * onto the neighbour face. In that case we draw the face but skip the
-   * numeral. */
+   * draw filled + outlined, then draw the face's baked numeral. The
+   * numeral cull is implicit: heavily tilted faces get killed by
+   * AREA_DOUBLE_MIN above the loop; everything else draws its glyph,
+   * with side faces using a smaller font + tighter box so they fit in
+   * the foreshortened polygon without overflowing. */
   #define AREA_DOUBLE_MIN 80
 
   GColor  outline = GColorBlack;
-  GFont   font    = (die->type == DIE_HOUR)
+
+  /* Two-tier glyph: the face labeled die->value (the time the user is
+   * reading) gets the prominent font; every other visible face gets a
+   * smaller "context" font and tighter box. The smaller side-face box
+   * mirrors how a real die looks under perspective — distant faces
+   * appear with smaller-looking numerals — and lets the side glyphs
+   * fit inside the foreshortened side-face polygons without the
+   * strict polygon cull. */
+  GFont   font_active = (die->type == DIE_HOUR)
     ? fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD)
     : fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
-  /* Box sized to fit the widest face value ("12" on hour, single digit
-   * on minute) with a small margin. The D10 kite face is asymmetric —
-   * shorter on the apex side than the centroid suggests — so the minute
-   * box has to stay narrow on both axes or the active face will overflow
-   * its top corner and the point-in-polygon check culls it. */
-  int16_t box_w   = (die->type == DIE_HOUR) ? 22 : 10;
-  int16_t box_h   = (die->type == DIE_HOUR) ? 16 : 12;
+  GFont   font_side   = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
+
+  int16_t box_active_w = (die->type == DIE_HOUR) ? 22 : 10;
+  int16_t box_active_h = (die->type == DIE_HOUR) ? 16 : 12;
+  int16_t box_side_w   = (die->type == DIE_HOUR) ? 12 :  8;
+  int16_t box_side_h   = (die->type == DIE_HOUR) ? 11 : 10;
 
   for (int f = 0; f < n_faces; f++) {
     const Face *face = &faces[f];
@@ -449,42 +433,18 @@ void dice3d_draw(GContext *ctx, const Die *die) {
     px /= face->n;
     py /= face->n;
 
-    /* Skip if the text box would overflow the projected face polygon.
-     * Test all four corners against the face's edges — any corner
-     * outside means the glyph spills onto a neighbour.
-     *
-     * Exception: the active face (the one labeled die->value) always
-     * draws its numeral. It's the time the user is reading; if the
-     * polyhedron is rotated such that the active face is too tilted
-     * to fit the box, the area cull above (AREA_DOUBLE_MIN) already
-     * caught the heavily-foreshortened case. For everything else the
-     * glyph may slightly overflow at oblique angles, which is
-     * preferable to losing the value entirely. */
-    bool is_active = (face->value == die->value);
-    if (!is_active) {
-      GPoint box_corners[4] = {
-        { (int16_t)(px - box_w / 2), (int16_t)(py - box_h / 2) },
-        { (int16_t)(px + box_w / 2), (int16_t)(py - box_h / 2) },
-        { (int16_t)(px + box_w / 2), (int16_t)(py + box_h / 2) },
-        { (int16_t)(px - box_w / 2), (int16_t)(py + box_h / 2) },
-      };
-      bool fits = true;
-      for (int k = 0; k < 4; k++) {
-        if (!point_in_convex_face(box_corners[k], face_pts, face->n)) {
-          fits = false;
-          break;
-        }
-      }
-      if (!fits) continue;
-    }
+    bool    is_active = (face->value == die->value);
+    GFont   fnt = is_active ? font_active : font_side;
+    int16_t bw  = is_active ? box_active_w : box_side_w;
+    int16_t bh  = is_active ? box_active_h : box_side_h;
 
     char buf[4];
     snprintf(buf, sizeof(buf), "%d", (int)face->value);
     /* Active face gets the highlight tint; everyone else is plain ink. */
     GColor text = is_active ? COLOR_NUMERAL_ACTIVE : COLOR_NUMERAL;
     graphics_context_set_text_color(ctx, text);
-    graphics_draw_text(ctx, buf, font,
-      GRect(px - box_w / 2, py - box_h / 2 - 1, box_w, box_h),
+    graphics_draw_text(ctx, buf, fnt,
+      GRect(px - bw / 2, py - bh / 2 - 1, bw, bh),
       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
   }
 }
