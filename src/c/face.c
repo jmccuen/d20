@@ -17,15 +17,17 @@
  * Phase 2 wires animations:
  *   - Hour tick  → TUMBLE_QUICK on the hour die
  *   - Minute tick → TUMBLE_SHAKE on the tens/ones die that changed
- *   - Tap (wrist-raise placeholder) → TUMBLE_FULL across all three dice,
- *     with the wall clock sampled once per gesture so the dice always
- *     settle on a consistent target time.
+ *   - Tap (wrist-raise placeholder) → physics_throw, which moves AND
+ *     rotates all three dice as a coordinated throw across the tray
+ *     (bouncing off the felt walls and each other) before settling
+ *     back at their home positions.
  *   - journey.c owns its own slide animations for step/sleep updates.
  */
 
 #include "face.h"
 #include "die.h"
 #include "journey.h"
+#include "physics.h"
 #include "tumble.h"
 #include "widgets.h"
 
@@ -202,6 +204,16 @@ void face_init(Window *window) {
   tumble_init(&s_hour_tumble, &s_hour_die, s_dice_layer);
   tumble_init(&s_tens_tumble, &s_tens_die, s_dice_layer);
   tumble_init(&s_ones_tumble, &s_ones_die, s_dice_layer);
+
+  /* Physics needs the dice + their rest positions + the felt rect
+   * (the inset region inside the tray frame — same GRect used by
+   * dice_stage_update). The home positions match the Die.center values
+   * above so the dice settle back to their layout positions. */
+  physics_init(s_dice_layer,
+               &s_hour_die, &s_tens_die, &s_ones_die,
+               s_hour_die.center, s_tens_die.center, s_ones_die.center,
+               GRect(6, 6, bounds.size.w - 12, 138 - 12));
+
   journey_init(s_journey_layer, s_state.step_goal);
   s_warm = false;
 
@@ -218,6 +230,7 @@ void face_deinit(void) {
   }
 #endif
   journey_deinit();
+  physics_deinit();
   tumble_deinit(&s_ones_tumble);
   tumble_deinit(&s_tens_tumble);
   tumble_deinit(&s_hour_tumble);
@@ -230,16 +243,19 @@ void face_deinit(void) {
 /* --- Event handlers ----------------------------------------------------- */
 
 void face_on_tick(struct tm *tt, TimeUnits units_changed) {
-  bool hour_changed   = (units_changed & HOUR_UNIT)   != 0;
-  bool minute_changed = (units_changed & MINUTE_UNIT) != 0;
-  bool day_changed    = (units_changed & DAY_UNIT)    != 0;
+  bool day_changed = (units_changed & DAY_UNIT) != 0;
 
   int new_hour = tt->tm_hour % 12;
   if (new_hour == 0) new_hour = 12;
   int new_minute = tt->tm_min;
 
-  if (hour_changed || s_state.hour != new_hour) {
-    s_state.hour = new_hour;
+  /* Skip dice updates while physics is in flight — physics owns
+   * rot_x/y/z and die->center during the throw. We re-sync from
+   * die->value at the next tick (or the next tap) after physics
+   * settles. Worst case the dice are stale by at most one minute. */
+  bool dice_owned_by_physics = physics_is_active();
+
+  if (!dice_owned_by_physics && s_hour_die.value != new_hour) {
     if (s_warm) {
       tumble_start(&s_hour_tumble, TUMBLE_QUICK, new_hour, 0);
     } else {
@@ -247,9 +263,9 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
       layer_mark_dirty(s_dice_layer);
     }
   }
+  s_state.hour = new_hour;
 
-  if (minute_changed || s_state.minute != new_minute) {
-    s_state.minute = new_minute;
+  if (!dice_owned_by_physics) {
     int new_tens = new_minute / 10;
     int new_ones = new_minute % 10;
     if (s_tens_die.value != new_tens) {
@@ -269,6 +285,7 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
       }
     }
   }
+  s_state.minute = new_minute;
 
   if (day_changed || s_state.date_str[0] == '\0') {
     s_state.day_of_year = tt->tm_yday + 1;
@@ -320,25 +337,29 @@ void face_on_health(HealthEventType event) {
 
 void face_on_tap(AccelAxisType axis, int32_t direction) {
   if (!s_warm) return;
+  if (physics_is_active()) return;  /* let an in-flight throw finish */
 
-  /* Time-sampling rule: snapshot the wall clock once, animate for fixed
-   * duration, and settle all three dice on this exact time. If the minute
-   * advances mid-tumble, the dice still land on the sampled values; the
-   * next minute tick will then SHAKE them to the new value.
+  /* Time-sampling rule: snapshot the wall clock once and physics_throw
+   * settles all three dice on this exact time. If the minute advances
+   * mid-throw the dice still land on the sampled values; the next
+   * minute tick will then SHAKE them to the new value.
    *
-   * Cascade: lighter dice fire first; the heavy hour die fires last and
-   * also spins longer (DUR_FULL_HOUR_MS > DUR_FULL_MIN_MS), so the
-   * settle order is ones → tens → hour. Reads as a thrown handful where
-   * the heavy die keeps rolling after the light ones have stopped. */
+   * Cancel any in-flight tumbles (hour QUICK or minute SHAKE) before
+   * starting the throw — otherwise the tumble update would fight
+   * physics for the rot_x/y/z fields. tumble_deinit triggers the
+   * teardown, which physics_throw immediately overwrites with the
+   * new target value and zero rotation. */
+  tumble_deinit(&s_hour_tumble);
+  tumble_deinit(&s_tens_tumble);
+  tumble_deinit(&s_ones_tumble);
+
   time_t now = time(NULL);
   struct tm *tm_now = localtime(&now);
   int hour = tm_now->tm_hour % 12;
   if (hour == 0) hour = 12;
   int minute = tm_now->tm_min;
 
-  tumble_start(&s_ones_tumble, TUMBLE_FULL, minute % 10,   0);
-  tumble_start(&s_tens_tumble, TUMBLE_FULL, minute / 10, 100);
-  tumble_start(&s_hour_tumble, TUMBLE_FULL, hour,        200);
+  physics_throw(hour, minute / 10, minute % 10);
 }
 
 void face_on_bluetooth(bool connected) {
