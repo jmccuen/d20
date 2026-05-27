@@ -46,6 +46,11 @@ typedef struct {
 
   int32_t  steps;
   int32_t  step_goal;
+
+  /* Weather. Filled from PebbleKit JS via AppMessage in Phase 4.5;
+   * for now we hold defaults so the cloud + temp render correctly. */
+  int16_t  weather_temp;     /* value in the active unit */
+  bool     weather_is_f;     /* true = °F, false = °C (default)    */
 } FaceState;
 
 static FaceState s_state;
@@ -56,8 +61,13 @@ static FaceState s_state;
 
 static Layer       *s_ribbon_layer;
 static Layer       *s_dice_layer;
-static Layer       *s_stats_layer;
-static Layer       *s_journey_layer;
+/* "Info" area below the dice tray: heart + camp + sleep hours on the
+ * left, weather cloud + temp + sine-wave trail + step count in the
+ * middle, big torch + battery% on the right. Replaces the previous
+ * stats + journey strip pair — the torch sprite spans the full height
+ * of this area so the two zones can't be drawn as separate layers
+ * with their own clipping. */
+static Layer       *s_info_layer;
 
 /* Background parchment. Drawn procedurally as a 3-band "vignette" —
  * darker frame, warm tan body, pale cream center highlight — costing
@@ -163,13 +173,15 @@ static void ribbon_update(Layer *layer, GContext *ctx) {
                       s_state.bluetooth);
 }
 
-static void stats_update(Layer *layer, GContext *ctx) {
-  widgets_draw_stats(ctx, layer_get_bounds(layer),
-                     s_state.heart_rate, s_state.battery_pct);
-}
-
-static void journey_update(Layer *layer, GContext *ctx) {
-  journey_draw(ctx, layer_get_bounds(layer));
+static void info_update(Layer *layer, GContext *ctx) {
+  /* Single update_proc for the combined heart / camp / weather / trail /
+   * steps / torch area. journey_draw paints the trail-and-friends; the
+   * heart and torch widgets layer on top with their own positioning. */
+  GRect bounds = layer_get_bounds(layer);
+  journey_draw(ctx, bounds, s_state.weather_temp, s_state.weather_is_f);
+  widgets_draw_heart(ctx, GPoint(16, 14), s_state.heart_rate);
+  widgets_draw_torch(ctx, GPoint(bounds.size.w - 32, 32),
+                     s_state.battery_pct);
 }
 
 /* --- Init / deinit ------------------------------------------------------ */
@@ -186,17 +198,20 @@ void face_init(Window *window) {
   window_set_background_color(window, PBL_IF_COLOR_ELSE(GColorRajah, GColorWhite));
 
   /* Defaults — overwritten by the initial push from main.c */
-  s_state.step_goal   = 10000;
-  s_state.hour        = 12;
-  s_state.minute      = 0;
-  s_state.battery_pct = 100;
-  s_state.bluetooth   = true;
+  s_state.step_goal     = 10000;
+  s_state.hour          = 12;
+  s_state.minute        = 0;
+  s_state.battery_pct   = 100;
+  s_state.bluetooth     = true;
+  s_state.weather_temp  = 22;     /* placeholder until PKJS hooks up */
+  s_state.weather_is_f  = false;  /* default to Celsius */
 
   /* Vertical layout, 228 px total:
    *   0   – 28   ribbon         (28 px)
-   *   28  – 166  dice stage     (138 px — tray + all 3 dice)
-   *   166 – 198  stat row       (32 px — heart with BPM, torch with %)
-   *   198 – 228  journey strip  (30 px)
+   *   28  – 156  dice stage    (128 px — tray + all 3 dice)
+   *   156 – 228  info area      (72 px — heart + camp + sleep hours
+   *                              on left; cloud/temp + trail + step
+   *                              count in middle; big torch on right)
    * Sections butt up against each other without overlap. */
 
   /* Background — flat-color fill (parchment-tone) added first so every
@@ -215,7 +230,7 @@ void face_init(Window *window) {
    * Die.center is in stage-local coordinates. The hour die sits left of
    * center as a "thrown" anchor; the two minute dice stack diagonally on
    * the right so the ones die occludes part of the tens. */
-  s_dice_layer = layer_create(GRect(0, 28, bounds.size.w, 138));
+  s_dice_layer = layer_create(GRect(0, 28, bounds.size.w, 128));
   layer_set_update_proc(s_dice_layer, dice_stage_update);
   layer_add_child(root, s_dice_layer);
 
@@ -238,16 +253,12 @@ void face_init(Window *window) {
     .type   = DIE_ONES,
   };
 
-  /* Stats row — heart with BPM inside, torch with percent below. */
-  s_stats_layer = layer_create(GRect(0, 166, bounds.size.w, 32));
-  layer_set_update_proc(s_stats_layer, stats_update);
-  layer_add_child(root, s_stats_layer);
-
-  /* Journey strip pinned to the bottom. */
-  s_journey_layer = layer_create(GRect(0, bounds.size.h - 30,
-                                        bounds.size.w, 30));
-  layer_set_update_proc(s_journey_layer, journey_update);
-  layer_add_child(root, s_journey_layer);
+  /* Combined info area — heart, camp, sleep hours on the left; cloud
+   * + temp, sine-wave trail, step count in the middle; big torch on
+   * the right. */
+  s_info_layer = layer_create(GRect(0, 156, bounds.size.w, 72));
+  layer_set_update_proc(s_info_layer, info_update);
+  layer_add_child(root, s_info_layer);
 
   /* All three TumbleHandles bind to the shared stage layer. */
   tumble_init(&s_hour_tumble, &s_hour_die, s_dice_layer);
@@ -261,7 +272,7 @@ void face_init(Window *window) {
   physics_init(s_dice_layer,
                &s_hour_die, &s_tens_die, &s_ones_die,
                s_hour_die.center, s_tens_die.center, s_ones_die.center,
-               GRect(6, 6, bounds.size.w - 12, 138 - 12));
+               GRect(6, 6, bounds.size.w - 12, 128 - 12));
   APP_LOG(APP_LOG_LEVEL_INFO, "after physics_init: heap %u free",
           (unsigned)heap_bytes_free());
 
@@ -270,7 +281,7 @@ void face_init(Window *window) {
   APP_LOG(APP_LOG_LEVEL_INFO, "after widgets_init: heap %u free",
           (unsigned)heap_bytes_free());
 
-  journey_init(s_journey_layer, s_state.step_goal);
+  journey_init(s_info_layer, s_state.step_goal);
   APP_LOG(APP_LOG_LEVEL_INFO, "after journey_init: heap %u free",
           (unsigned)heap_bytes_free());
 
@@ -294,8 +305,7 @@ void face_deinit(void) {
   tumble_deinit(&s_ones_tumble);
   tumble_deinit(&s_tens_tumble);
   tumble_deinit(&s_hour_tumble);
-  layer_destroy(s_journey_layer);
-  layer_destroy(s_stats_layer);
+  layer_destroy(s_info_layer);
   layer_destroy(s_dice_layer);
   layer_destroy(s_ribbon_layer);
   layer_destroy(s_bg_layer);
@@ -366,7 +376,7 @@ void face_on_tick(struct tm *tt, TimeUnits units_changed) {
 
 void face_on_battery(BatteryChargeState s) {
   s_state.battery_pct = s.charge_percent;
-  layer_mark_dirty(s_stats_layer);
+  layer_mark_dirty(s_info_layer);
 }
 
 #if defined(PBL_HEALTH)
@@ -375,7 +385,7 @@ void face_on_health(HealthEventType event) {
     case HealthEventHeartRateUpdate: {
       HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateBPM);
       s_state.heart_rate = (int16_t)bpm;
-      layer_mark_dirty(s_stats_layer);
+      layer_mark_dirty(s_info_layer);
       break;
     }
     case HealthEventSleepUpdate: {

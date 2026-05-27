@@ -69,12 +69,17 @@
         {
           "type": "bitmap",
           "name": "IMAGE_TORCH_SHEET",
-          "file": "torch/torch.png"
+          "file": "torch/torch_lg.png"
         },
         {
           "type": "bitmap",
           "name": "IMAGE_CAMP",
           "file": "camp/camp.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_CLOUD",
+          "file": "weather/cloud.png"
         }
       ]
     }

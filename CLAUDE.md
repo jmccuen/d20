@@ -34,8 +34,8 @@ All source is in `src/c/`. Module responsibilities are intentionally narrow; the
 | `dice3d.c` / `dice3d.h` | Procedural 3D dodecahedron (D12, hour die) and pentagonal trapezohedron (D10, minute dice). Euler rotation → orthographic projection → 2D signed-area backface cull → 4-step flat shading. No depth buffer (convex + backface cull = no overdraw). Vertex / face / per-value-rest-rotation tables are emitted by `tools/gen_dice.py` — re-run rather than hand-edit (the script validates pentagon edge lengths, kite planarity, opposite-pair value sums, and CCW perimeter ordering — a face listed out of perimeter order renders as a self-intersecting polygon). At draw time the per-value rest rotation puts the face labeled `die->value` dead-on the camera; every visible face draws its own baked numeral. Numeral visibility flips on motion: at rest only the active face (`face->value == die->value`) shows its glyph, in the prominent font + highlight color (`COLOR_NUMERAL_ACTIVE`). While rotating (any `rot_x/y/z` nonzero — physics, QUICK, SHAKE) every visible face draws its numeral in the smaller side font, with the active face still tinted so the target value is scannable as it tumbles. Side faces at rest are blank by design — at small projected sizes their glyphs overflowed into neighbour faces no matter how tight the box. The `AREA_DOUBLE_MIN` sliver cull above the face loop is the only cull. Both ink colors are macros at the top of the file, intended to become user-selectable in Phase 5. |
 | `tumble.c` / `tumble.h` | Per-die animation state machine. `TUMBLE_QUICK` (hour re-roll) and `TUMBLE_SHAKE` (minute settle). `TUMBLE_FULL` exists in the enum but is unused — the tap-roll now goes through `physics.c` instead. |
 | `physics.c` / `physics.h` | Single-shot dice-tray simulation fired by tap. Random linear + angular velocity, wall and die-die collisions, damping, then a 70→100% return-to-home phase. Owns die positions and rotations during its run, so `face_on_tick` skips dice updates while `physics_is_active()`. Position uses 256× fixed-point so damping doesn't quantize sub-pixel velocity to zero. |
-| `journey.c` / `journey.h` | Bottom journey strip. Owns its own slide animations for step changes and sleep transitions. Loads sprite frames (mage idle / walk + campfire) in `journey_init` and releases them in `journey_deinit`. The walk-frame index is updated from slide progress in `slide_update` and read by `draw_token` so the mage cycles through walk frames while the token is moving. `draw_camp` renders the 32×32 campfire sprite at the trailhead. Treasure chest and boss sigil stay procedural. |
-| `widgets.c` / `widgets.h` | Date ribbon (banner + feather + familiar) and stat row (heart + torch + battery %). Owns the banner, feather, and torch atlas bitmaps via `widgets_init`/`widgets_deinit`. Torch atlas is 128×32 = 4 sub-bitmaps (full / half / embers / dark), keyed off `torch_state_for(pct)`. The percent label sits in the bottom transparent region of the 32×32 torch frame for a stacked look. Heart and familiar stay procedural. |
+| `journey.c` / `journey.h` | Info-area content — sine-wave trail with mage walking on it, campfire at the trailhead with sleep duration ("6.2h") beneath, cloud + temperature ("28°") above the trail center, numeric step count ("1.2k") below. Owns mage frames + camp + cloud bitmaps. Slide animations keep the mage walking along the sine y-curve as steps update. Heart and torch are drawn separately by `widgets_draw_heart` / `widgets_draw_torch` after `journey_draw` so they overlay. `TRAIL_X_START` / `TRAIL_X_END` / `TRAIL_MIDLINE` / `TRAIL_AMP` define the sine geometry; the trail cuts off before the right edge to leave room for the big torch. |
+| `widgets.c` / `widgets.h` | Ribbon (banner + Bluetooth familiar + feather quill + date) plus the heart and big torch widgets. `widgets_draw_heart(at, hr)` and `widgets_draw_torch(at, pct)` are centred on the supplied point. Torch atlas is 256×64 = 4 sub-bitmaps of 64×64 (full / half / embers / dark), keyed off `torch_state_for(pct)`; battery % renders inside the flame in white. Familiar is on the LEFT of the ribbon, feather on the RIGHT (swapped from the earlier layout). |
 | Resource bundle | Bitmaps live in `resources/` and are declared in `package.json` under `pebble.resources.media` with `IMAGE_*` resource IDs. Sub-bitmaps from spritesheets use `gbitmap_create_as_sub_bitmap(parent, sub_rect)` — destroy sub-bitmaps **before** their parent atlas, and draw alpha-having bitmaps with `graphics_context_set_compositing_mode(ctx, GCompOpSet)` so transparent regions don't paint over what's behind. Memory budget watch: a 200×228 decoded bitmap is ~45 KB; loading it alongside all other sprites on Emery crashes the watch (App fault, OOM). The parchment background is currently a flat `GColorRajah` fill via `bg_update` in `face.c` — bitmap loading is deferred until we have a smaller texture or a different rendering approach. |
 
 ### Cross-cutting conventions
@@ -51,13 +51,17 @@ All source is in `src/c/`. Module responsibilities are intentionally narrow; the
 ### Layer layout (vertical, 228 px total)
 
 ```
-0   – 28   ribbon (with familiar in corner)
-28  – 166  dice stage (138 px — tray + all 3 dice in one shared layer)
-166 – 198  stat row (heart + BPM, torch + %)
-198 – 228  journey strip
+0   – 28   ribbon (BT familiar left, feather quill right, date centered)
+28  – 156  dice stage (128 px — tray + all 3 dice in one shared layer)
+156 – 228  info area (72 px — heart top-left, camp + sleep hours
+                       beneath it, cloud + temp top-center, sine-wave
+                       trail through middle with mage walking on it,
+                       step count below trail, big torch right)
 ```
 
 Sections butt up cleanly without overlap. The dice stage is one shared layer (`s_dice_layer`) — Die.center is in stage-local coords. Any tumble marks the stage dirty and re-renders all three dice; the per-frame cost is small. The tray itself is drawn as polygons in `dice_stage_update`; a sprite is planned but not in yet (colors are placeholders).
+
+The info area is also one shared layer (`s_info_layer`), drawn by `info_update` in `face.c`. The big torch sprite (64×64) spans almost the full height of this zone — that's why stats and journey can't be separate layers any more (clipping would chop the torch). `journey_draw` handles the trail / camp / sleep hours / cloud / temp / steps / mage; `widgets_draw_heart` and `widgets_draw_torch` are layered on top by the same `info_update`.
 
 ## Planning docs
 

@@ -1,37 +1,40 @@
 /*
- * journey.c — procedural journey strip with smooth token motion.
+ * journey.c — sine-wave trail with mage walking on it, plus the
+ * surrounding info-area elements (camp + sleep hours, cloud + temp,
+ * step count). Heart and torch live in widgets.c — face.c overlays
+ * them on top of this draw.
  *
- * Token position is stored as a fixed-point fraction in [0, TRAIL_MAX] so
- * the slide animation is independent of trail pixel width. Three things
- * can change the target position:
+ * Token position is stored as a fixed-point fraction in [0, TRAIL_MAX]
+ * so the slide animation is independent of trail pixel width. Three
+ * things can change the target position:
  *
  *   1. Step count update          → target = steps/goal
  *   2. Sleep starts                → target = 0 (camp)
  *   3. Sleep ends                  → target = steps/goal again
  *
- * Any target change schedules a slide animation from the current displayed
- * position to the new target, replacing whatever was already in flight.
+ * Any target change schedules a slide animation from the current
+ * displayed position to the new target, replacing whatever was
+ * already in flight.
  *
- * A "Xh Ym rest" label renders under the camp for REST_LABEL_HOLD_S
- * seconds after waking. The duration is computed from the timestamp pair
- * (sleep_started_at, sleep_ended_at).
- *
- * Phase 4 will replace the camp / chest / boss / token primitives with
- * proper sprite art and add a class silhouette inside the token.
+ * Sleep duration ("6.2h") is computed from the timestamp pair
+ * (sleep_started_at, sleep_ended_at) and shown under the camp.
  */
 
 #include "journey.h"
 
 #define COLOR_TRAIL    PBL_IF_COLOR_ELSE(GColorWindsorTan,       GColorDarkGray)
 #define COLOR_INK      GColorBlack
-#define COLOR_TREASURE PBL_IF_COLOR_ELSE(GColorChromeYellow,     GColorWhite)
-#define COLOR_BOSS     PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorDarkGray)
 #define COLOR_LABEL    PBL_IF_COLOR_ELSE(GColorBulgarianRose,    GColorDarkGray)
 
 #define TRAIL_MAX             10000  /* fixed-point denominator for token_p_* */
 #define SLIDE_STEP_MS         600    /* step-update tween */
 #define SLIDE_SLEEP_MS        1200   /* walk-to-camp / depart-camp */
-#define REST_LABEL_HOLD_S     (2 * 60 * 60)  /* show rest label for 2 h */
+
+/* Sine-wave trail geometry, in info-layer-local coordinates. */
+#define TRAIL_X_START   22
+#define TRAIL_X_END    130     /* cuts off before the torch on the right */
+#define TRAIL_MIDLINE   38
+#define TRAIL_AMP        8
 
 static struct {
   Layer    *layer;
@@ -55,10 +58,11 @@ static struct {
   time_t    sleep_ended_at;
 } s_j;
 
-/* Mage sprite frames + campfire sprite. Loaded once in journey_init,
- * released in journey_deinit. */
-#define CAMP_W  10
-#define CAMP_H  10
+/* Sprite assets. Loaded once in journey_init, released in journey_deinit. */
+#define CAMP_W   10
+#define CAMP_H   10
+#define CLOUD_W  32
+#define CLOUD_H  22
 
 static GBitmap *s_mage_idle_1;
 static GBitmap *s_mage_idle_2;  /* reserved for future idle cycle */
@@ -66,6 +70,7 @@ static GBitmap *s_mage_walk_1;
 static GBitmap *s_mage_walk_2;
 static GBitmap *s_mage_walk_3;
 static GBitmap *s_camp;
+static GBitmap *s_cloud;
 
 /* --- Slide animation ---------------------------------------------------- */
 
@@ -172,6 +177,8 @@ void journey_init(Layer *layer, int32_t step_goal) {
   if (!s_mage_walk_3) APP_LOG(APP_LOG_LEVEL_WARNING, "journey: mage_walk_3 failed");
   s_camp        = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_CAMP);
   if (!s_camp)        APP_LOG(APP_LOG_LEVEL_WARNING, "journey: camp failed");
+  s_cloud       = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_CLOUD);
+  if (!s_cloud)       APP_LOG(APP_LOG_LEVEL_WARNING, "journey: cloud failed");
 }
 
 void journey_deinit(void) {
@@ -180,6 +187,7 @@ void journey_deinit(void) {
     s_j.slide_anim = NULL;
   }
   s_j.layer = NULL;
+  if (s_cloud)       { gbitmap_destroy(s_cloud);       s_cloud       = NULL; }
   if (s_camp)        { gbitmap_destroy(s_camp);        s_camp        = NULL; }
   if (s_mage_walk_3) { gbitmap_destroy(s_mage_walk_3); s_mage_walk_3 = NULL; }
   if (s_mage_walk_2) { gbitmap_destroy(s_mage_walk_2); s_mage_walk_2 = NULL; }
@@ -216,52 +224,119 @@ void journey_set_sleeping(bool sleeping) {
   retarget(SLIDE_SLEEP_MS);
 }
 
+/* --- Helpers ------------------------------------------------------------ */
+
+/* Sine y-position for a given x along the trail.
+ * One full cycle from TRAIL_X_START to TRAIL_X_END. */
+static int16_t sine_y(int16_t x) {
+  int32_t span = TRAIL_X_END - TRAIL_X_START;
+  if (span <= 0) return TRAIL_MIDLINE;
+  int32_t phase = (int32_t)(x - TRAIL_X_START) * TRIG_MAX_ANGLE / span;
+  int32_t s = sin_lookup(phase);
+  return (int16_t)(TRAIL_MIDLINE + (s * TRAIL_AMP) / TRIG_MAX_RATIO);
+}
+
+/* "245" for sub-1k, "1.2k" / "12.3k" for thousands. */
+static void format_steps(int32_t steps, char *buf, size_t buf_size) {
+  if (steps < 0) steps = 0;
+  if (steps < 1000) {
+    snprintf(buf, buf_size, "%ld", (long)steps);
+  } else {
+    int32_t tenths = steps / 100;     /* e.g. 1234 → 12 → "1.2k" */
+    snprintf(buf, buf_size, "%ld.%ldk",
+             (long)(tenths / 10), (long)(tenths % 10));
+  }
+}
+
+/* "—" when no completed sleep yet, otherwise "6.2h". */
+static void format_sleep_hours(char *buf, size_t buf_size) {
+  if (s_j.sleep_ended_at <= s_j.sleep_started_at ||
+      s_j.sleep_started_at == 0) {
+    snprintf(buf, buf_size, "\xE2\x80\x94");  /* em dash */
+    return;
+  }
+  int32_t secs = (int32_t)(s_j.sleep_ended_at - s_j.sleep_started_at);
+  int32_t deci_h = (secs * 10) / 3600;
+  snprintf(buf, buf_size, "%ld.%ldh",
+           (long)(deci_h / 10), (long)(deci_h % 10));
+}
+
 /* --- Drawing primitives ------------------------------------------------- */
 
-static void draw_camp(GContext *ctx, GPoint at, bool sleeping) {
-  /* Camp sprite is 10×10. Centered on (at.x, at.y) — the trail midline.
-   * sleeping is unused for now: the campfire is always lit in the art.
-   * A separate idle / no-flame variant can come later. */
-  (void)sleeping;
+static void draw_trail(GContext *ctx, bool sleeping) {
+  /* Dashed sine wave from TRAIL_X_START to TRAIL_X_END. During sleep
+   * we widen the gaps so the trail reads as muted/inactive. */
+  graphics_context_set_stroke_color(ctx, COLOR_TRAIL);
+  graphics_context_set_stroke_width(ctx, 2);
+  const int16_t period = sleeping ? 10 : 6;
+  const int16_t seglen = 3;
+  for (int16_t x = TRAIL_X_START; x < TRAIL_X_END; x += period) {
+    int16_t end_x = (x + seglen < TRAIL_X_END) ? (x + seglen) : TRAIL_X_END;
+    graphics_draw_line(ctx,
+      GPoint(x,     sine_y(x)),
+      GPoint(end_x, sine_y(end_x)));
+  }
+}
+
+static void draw_camp(GContext *ctx) {
   if (!s_camp) return;
-  GRect dest = GRect(at.x - CAMP_W / 2, at.y - CAMP_H / 2, CAMP_W, CAMP_H);
+  /* Camp at the trail's start, sitting on the trail's local y. */
+  int16_t cx = TRAIL_X_START;
+  int16_t cy = sine_y(cx);
   graphics_context_set_compositing_mode(ctx, GCompOpSet);
-  graphics_draw_bitmap_in_rect(ctx, s_camp, dest);
+  graphics_draw_bitmap_in_rect(ctx, s_camp,
+    GRect(cx - CAMP_W / 2, cy - CAMP_H / 2, CAMP_W, CAMP_H));
+
+  /* Sleep hours under the camp. */
+  char buf[8];
+  format_sleep_hours(buf, sizeof(buf));
+  graphics_context_set_text_color(ctx, COLOR_LABEL);
+  graphics_draw_text(ctx, buf,
+    fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
+    GRect(cx - 18, TRAIL_MIDLINE + 12, 36, 14),
+    GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
-static void draw_chest(GContext *ctx, GPoint at) {
-  GRect body = GRect(at.x - 5, at.y - 3, 10, 8);
-  graphics_context_set_fill_color(ctx, COLOR_TREASURE);
-  graphics_fill_rect(ctx, body, 0, GCornerNone);
-  graphics_context_set_stroke_color(ctx, COLOR_INK);
-  graphics_draw_rect(ctx, body);
-  graphics_draw_line(ctx,
-    GPoint(at.x - 5, at.y),
-    GPoint(at.x + 5, at.y));
+static void draw_cloud_and_temp(GContext *ctx,
+                                int16_t temp, bool is_f) {
+  if (!s_cloud) return;
+  /* Cloud centred horizontally on the trail midpoint, sitting near
+   * the top of the info area. */
+  int16_t cx = (TRAIL_X_START + TRAIL_X_END) / 2;
+  int16_t cy = 12;
+  graphics_context_set_compositing_mode(ctx, GCompOpSet);
+  graphics_draw_bitmap_in_rect(ctx, s_cloud,
+    GRect(cx - CLOUD_W / 2, cy - CLOUD_H / 2, CLOUD_W, CLOUD_H));
+
+  /* Temperature centred inside the cloud — single digit-then-degree
+   * form ("28°"). Unit (C/F) controlled by the caller via is_f; for
+   * now no in-cloud letter so it stays compact. */
+  (void)is_f;  /* unit selection deferred until settings ship */
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%d\xc2\xb0", temp);  /* "28°" */
+  graphics_context_set_text_color(ctx, COLOR_INK);
+  graphics_draw_text(ctx, buf,
+    fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
+    GRect(cx - 16, cy - 9, 32, 16),
+    GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
-static void draw_boss(GContext *ctx, GPoint at) {
-  GPoint tri[3] = {
-    { at.x,     at.y - 7 },
-    { at.x + 6, at.y + 4 },
-    { at.x - 6, at.y + 4 },
-  };
-  GPathInfo info = { 3, tri };
-  GPath *p = gpath_create(&info);
-  graphics_context_set_fill_color(ctx, COLOR_BOSS);
-  gpath_draw_filled(ctx, p);
-  graphics_context_set_stroke_color(ctx, COLOR_INK);
-  gpath_draw_outline(ctx, p);
-  gpath_destroy(p);
+static void draw_step_count(GContext *ctx) {
+  /* Numeric step count centred below the trail. */
+  char buf[8];
+  format_steps(s_j.steps, buf, sizeof(buf));
+  int16_t cx = (TRAIL_X_START + TRAIL_X_END) / 2;
+  graphics_context_set_text_color(ctx, COLOR_LABEL);
+  graphics_draw_text(ctx, buf,
+    fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
+    GRect(cx - 24, TRAIL_MIDLINE + 12, 48, 14),
+    GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
-static void draw_token(GContext *ctx, GPoint at, bool sleeping) {
-  /* Frame pick:
-   *   - Sleeping: idle frame (mage at camp).
-   *   - Mid-slide: cycle the 3 walk frames keyed off slide progress.
-   *   - Otherwise: idle frame at the current position.
-   * Class is hardcoded to mage for now; selectable class silhouettes
-   * are Phase 5b. */
+static void draw_mage(GContext *ctx, bool sleeping) {
+  /* Pick the frame:
+   *   - mid-slide: cycle the 3 walk frames keyed off slide progress;
+   *   - otherwise: idle frame. */
   GBitmap *frame;
   if (s_j.slide_anim && !sleeping) {
     GBitmap *walks[3] = { s_mage_walk_1, s_mage_walk_2, s_mage_walk_3 };
@@ -272,80 +347,47 @@ static void draw_token(GContext *ctx, GPoint at, bool sleeping) {
   } else {
     frame = s_mage_idle_1;
   }
+  if (!frame) return;
 
-  if (frame) {
-    GSize size = gbitmap_get_bounds(frame).size;
-    GRect dest = GRect(at.x - size.w / 2,
-                       at.y - size.h / 2,
-                       size.w, size.h);
-    graphics_context_set_compositing_mode(ctx, GCompOpSet);
-    graphics_draw_bitmap_in_rect(ctx, frame, dest);
+  /* Mage x-position along the trail; y follows the sine wave. When
+   * stationary at camp (no steps, not sleeping) we nudge a few px so
+   * the mage isn't drawn dead-centre on the campfire. */
+  int32_t span = TRAIL_X_END - TRAIL_X_START;
+  int16_t mx;
+  if (s_j.token_p_current <= 0 && s_j.steps <= 0 && !sleeping) {
+    mx = TRAIL_X_START + 4;
+  } else {
+    mx = TRAIL_X_START + (int16_t)((int64_t)span * s_j.token_p_current / TRAIL_MAX);
   }
+  int16_t my = sine_y(mx);
+
+  GSize size = gbitmap_get_bounds(frame).size;
+  /* Stand on the trail rather than centre on it — bottom of sprite at
+   * the sine y. */
+  GRect dest = GRect(mx - size.w / 2,
+                     my - size.h + 2,
+                     size.w, size.h);
+  graphics_context_set_compositing_mode(ctx, GCompOpSet);
+  graphics_draw_bitmap_in_rect(ctx, frame, dest);
 
   if (sleeping) {
     graphics_context_set_text_color(ctx, COLOR_INK);
     graphics_draw_text(ctx, "Z",
       fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
-      GRect(at.x + 8, at.y - 18, 10, 14),
+      GRect(mx + 8, my - 22, 10, 14),
       GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
   }
 }
 
-static void draw_rest_label(GContext *ctx, int16_t camp_x, int16_t camp_y) {
-  /* Render only inside the 2-hour window after a wake event. */
-  if (s_j.sleep_ended_at == 0)                       return;
-  if (s_j.sleep_started_at == 0)                     return;
-  if (s_j.sleep_ended_at <= s_j.sleep_started_at)    return;
-  time_t now = time(NULL);
-  if (now - s_j.sleep_ended_at > REST_LABEL_HOLD_S)  return;
-
-  int32_t rest_s = s_j.sleep_ended_at - s_j.sleep_started_at;
-  int rest_h = (int)(rest_s / 3600);
-  int rest_m = (int)((rest_s % 3600) / 60);
-
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%dh %dm rest", rest_h, rest_m);
-  graphics_context_set_text_color(ctx, COLOR_LABEL);
-  graphics_draw_text(ctx, buf,
-    fonts_get_system_font(FONT_KEY_GOTHIC_14),
-    GRect(camp_x - 30, camp_y + 6, 80, 14),
-    GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
-}
-
 /* --- Composition -------------------------------------------------------- */
 
-void journey_draw(GContext *ctx, GRect bounds) {
-  const int16_t y    = bounds.size.h / 2;
-  const int16_t x0   = 16;
-  const int16_t x1   = bounds.size.w - 16;
-  const int16_t span = x1 - x0;
+void journey_draw(GContext *ctx, GRect bounds,
+                  int16_t weather_temp, bool weather_is_f) {
+  (void)bounds;  /* drawing is positioned by TRAIL_* constants */
 
-  /* Dashed trail. Halved alpha is not available on color e-paper, so during
-   * sleep we just skip more of the dashes for a "muted" look. */
-  graphics_context_set_stroke_color(ctx, COLOR_TRAIL);
-  graphics_context_set_stroke_width(ctx, 2);
-  const int16_t period = s_j.sleeping ? 10 : 6;
-  const int16_t seglen = 3;
-  for (int16_t x = x0; x < x1; x += period) {
-    int16_t seg_end = (x + seglen < x1) ? (x + seglen) : x1;
-    graphics_draw_line(ctx, GPoint(x, y), GPoint(seg_end, y));
-  }
-
-  draw_camp (ctx, GPoint(x0,            y), s_j.sleeping);
-  draw_chest(ctx, GPoint(x0 + span / 2, y));
-  draw_boss (ctx, GPoint(x1,            y));
-
-  /* Token: position derived from token_p_current.
-   *   - Sleep mode: animation has slid current toward 0 (camp).
-   *   - No data: current sits at the small off-camp offset.
-   *   - Otherwise: current interpolates toward steps/goal. */
-  int16_t tx;
-  if (s_j.token_p_current <= 0 && s_j.steps <= 0 && !s_j.sleeping) {
-    tx = x0 + 4;  /* nudge off-camp so token doesn't read as stuck */
-  } else {
-    tx = x0 + (int16_t)((int64_t)span * s_j.token_p_current / TRAIL_MAX);
-  }
-  draw_token(ctx, GPoint(tx, y), s_j.sleeping);
-
-  draw_rest_label(ctx, x0, y);
+  draw_trail(ctx, s_j.sleeping);
+  draw_camp(ctx);
+  draw_cloud_and_temp(ctx, weather_temp, weather_is_f);
+  draw_step_count(ctx);
+  draw_mage(ctx, s_j.sleeping);
 }

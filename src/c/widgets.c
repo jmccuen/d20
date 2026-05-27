@@ -18,11 +18,11 @@
 
 /* --- Bitmap resources --------------------------------------------------- */
 
-/* Torch atlas is 128×32 — 4 frames of 32×32 laid out left-to-right:
+/* Torch atlas is 256×64 — 4 frames of 64×64 laid out left-to-right:
  * full / half / embers / dark. Frame index maps directly to battery
  * state via torch_state_for(pct). */
-#define TORCH_FRAME_W   32
-#define TORCH_FRAME_H   32
+#define TORCH_FRAME_W   64
+#define TORCH_FRAME_H   64
 #define TORCH_N_FRAMES  4
 
 static GBitmap *s_banner;
@@ -78,20 +78,10 @@ void widgets_draw_ribbon(GContext *ctx, GRect b,
     graphics_draw_bitmap_in_rect(ctx, s_banner, b);
   }
 
-  /* Feather quill, sitting inboard of the banner's left taper. */
-  if (s_feather) {
-    graphics_context_set_compositing_mode(ctx, GCompOpSet);
-    graphics_draw_bitmap_in_rect(ctx, s_feather,
-      GRect(b.origin.x + 14,
-            b.origin.y + (b.size.h - 20) / 2,
-            20, 20));
-  }
-
-  /* Familiar placeholder, mirrored inboard of the banner's right taper.
-   * Connected: solid outline + eye dot; disconnected: faded outline.
-   * Phase 5 swaps to selectable creature silhouettes. */
-  GPoint fam = GPoint(b.origin.x + b.size.w - 24,
-                      b.origin.y + b.size.h / 2);
+  /* Bluetooth familiar on the LEFT, lower + inward from the previous
+   * placement. Connected: solid outline + eye dot. Disconnected: faded
+   * outline. Phase 5 swaps to selectable creature silhouettes. */
+  GPoint fam = GPoint(b.origin.x + 22, b.origin.y + b.size.h / 2 + 2);
   if (bt) {
     graphics_context_set_stroke_color(ctx, COLOR_INK);
     graphics_context_set_stroke_width(ctx, 1);
@@ -104,11 +94,19 @@ void widgets_draw_ribbon(GContext *ctx, GRect b,
     graphics_draw_circle(ctx, fam, 5);
   }
 
+  /* Feather quill on the RIGHT, lower + inward. */
+  if (s_feather) {
+    graphics_context_set_compositing_mode(ctx, GCompOpSet);
+    graphics_draw_bitmap_in_rect(ctx, s_feather,
+      GRect(b.origin.x + b.size.w - 36,
+            b.origin.y + (b.size.h - 20) / 2 + 1,
+            20, 20));
+  }
+
   /* Date text. Pushed down by ~5 px so the cap-height sits at the
    * banner's vertical mid-line. Width clamped to the space between
-   * feather and familiar (with 2 px breathing room each side). Format
-   * uses `%b` (abbreviated month — "May", "Sep", "Oct") so even the
-   * widest months fit; full month names overflow at 18 pt. */
+   * familiar (left) and feather (right). Format uses `%b` (abbreviated
+   * month — "May", "Sep", "Oct") so even the widest months fit. */
   char buf[24];
   snprintf(buf, sizeof(buf), "Day %d  %s", doy, date);
   graphics_context_set_text_color(ctx, COLOR_INK);
@@ -121,22 +119,24 @@ void widgets_draw_ribbon(GContext *ctx, GRect b,
 
 /* --- Heart with BPM inside (procedural) -------------------------------- */
 
-static void draw_heart_body(GContext *ctx, GPoint c) {
+/* Smaller heart than the original — sized for the new info-area layout
+ * where the heart is one of several elements in the top-left zone. */
+void widgets_draw_heart(GContext *ctx, GPoint c, int16_t hr) {
   graphics_context_set_fill_color(ctx, COLOR_HEART);
-  graphics_fill_circle(ctx, GPoint(c.x - 6, c.y - 4), 8);
-  graphics_fill_circle(ctx, GPoint(c.x + 6, c.y - 4), 8);
+  graphics_fill_circle(ctx, GPoint(c.x - 4, c.y - 3), 6);
+  graphics_fill_circle(ctx, GPoint(c.x + 4, c.y - 3), 6);
   GPoint tri[3] = {
-    { c.x - 13, c.y - 2 },
-    { c.x + 13, c.y - 2 },
-    { c.x,      c.y + 13 },
+    { c.x - 10, c.y - 1 },
+    { c.x + 10, c.y - 1 },
+    { c.x,      c.y + 10 },
   };
   GPathInfo info = { 3, tri };
   GPath *p = gpath_create(&info);
   gpath_draw_filled(ctx, p);
   gpath_destroy(p);
-}
 
-static void draw_bpm_inside(GContext *ctx, GPoint c, int16_t hr) {
+  /* BPM rendered inside the heart. hr == 0 means HealthService hasn't
+   * reported a reading yet; show an em-dash instead of "0". */
   const char *txt;
   char num_buf[6];
   if (hr > 0) {
@@ -148,7 +148,7 @@ static void draw_bpm_inside(GContext *ctx, GPoint c, int16_t hr) {
   graphics_context_set_text_color(ctx, COLOR_BPM_INK);
   graphics_draw_text(ctx, txt,
     fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
-    GRect(c.x - 14, c.y - 11, 28, 16),
+    GRect(c.x - 14, c.y - 10, 28, 14),
     GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
@@ -170,36 +170,28 @@ static TorchState torch_state_for(uint8_t pct) {
   return TORCH_DARK;
 }
 
-/* --- Composite stat row ------------------------------------------------- */
+/* --- Big torch with battery % inside the flame ------------------------- */
 
-void widgets_draw_stats(GContext *ctx, GRect b,
-                        int16_t hr, uint8_t pct) {
-  /* Heart on the left, vertically centered. */
-  GPoint heart_c = GPoint(b.origin.x + 22,
-                          b.origin.y + b.size.h / 2);
-  draw_heart_body(ctx, heart_c);
-  draw_bpm_inside(ctx, heart_c, hr);
-
-  /* Torch on the right. The 32×32 sprite frame holds the flame in its
-   * upper region and is transparent below — the percent label sits in
-   * that lower transparent area so the two stack visually. Sprite is
-   * pinned to the right edge with a 4-px breathing margin. */
+void widgets_draw_torch(GContext *ctx, GPoint at, uint8_t pct) {
   TorchState state = torch_state_for(pct);
-  if (s_torch_frames[state]) {
-    GRect torch_rect = GRect(b.origin.x + b.size.w - 36,
-                             b.origin.y,
-                             TORCH_FRAME_W, TORCH_FRAME_H);
-    graphics_context_set_compositing_mode(ctx, GCompOpSet);
-    graphics_draw_bitmap_in_rect(ctx, s_torch_frames[state], torch_rect);
-  }
+  if (!s_torch_frames[state]) return;
 
+  /* Sprite drawn centred on `at`. */
+  GRect rect = GRect(at.x - TORCH_FRAME_W / 2,
+                     at.y - TORCH_FRAME_H / 2,
+                     TORCH_FRAME_W, TORCH_FRAME_H);
+  graphics_context_set_compositing_mode(ctx, GCompOpSet);
+  graphics_draw_bitmap_in_rect(ctx, s_torch_frames[state], rect);
+
+  /* Battery % rendered inside the flame at the top of the sprite.
+   * White reads cleanly against the warm flame colours; at very low
+   * battery the flame is mostly empty so the number falls onto the
+   * parchment background — still legible. */
   char pct_buf[8];
-  snprintf(pct_buf, sizeof(pct_buf), "%d%%", pct);
-  graphics_context_set_text_color(ctx, COLOR_INK);
+  snprintf(pct_buf, sizeof(pct_buf), "%d", pct);
+  graphics_context_set_text_color(ctx, GColorWhite);
   graphics_draw_text(ctx, pct_buf,
-    fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
-    GRect(b.origin.x + b.size.w - 40,
-          b.origin.y + 17,
-          32, 14),
+    fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
+    GRect(at.x - 16, at.y - 22, 32, 22),
     GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }

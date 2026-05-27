@@ -26,4 +26,9 @@ void journey_set_steps(int32_t steps);
 void journey_set_goal(int32_t goal);
 void journey_set_sleeping(bool sleeping);
 
-void journey_draw(GContext *ctx, GRect bounds);
+/* Draws the info-area content (sine-wave trail, camp + sleep hours,
+ * cloud + temp, mage on trail, step count). Heart and torch are drawn
+ * separately by widgets_draw_heart / widgets_draw_torch which the
+ * caller invokes on top of this. */
+void journey_draw(GContext *ctx, GRect bounds,
+                  int16_t weather_temp, bool weather_is_f);
