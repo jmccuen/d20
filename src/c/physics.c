@@ -14,15 +14,18 @@
  *
  * Die-die collisions use a coarse 1D elastic-collision approximation
  * along the contact normal: compute the (dx, dy) between centers,
- * normalize via float sqrt, project relative velocity onto that normal,
- * and exchange the normal component (equal mass). The tangential
- * component is preserved. Bodies are pushed apart by the overlap
- * distance so they're non-overlapping on the next frame.
+ * normalize via integer sqrt + fixed-point normal vectors, project
+ * relative velocity onto that normal, and exchange the normal
+ * component (equal mass). The tangential component is preserved.
+ * Bodies are pushed apart by the overlap distance so they're
+ * non-overlapping on the next frame.
+ *
+ * All math is integer/fixed-point throughout — no FPU dependency,
+ * which had been a suspected crash source on Emery.
  */
 
 #include "physics.h"
 #include <stdlib.h>
-#include <math.h>
 
 #define PHYSICS_DURATION_MS  1500
 #define RETURN_PHASE_PCT       70
@@ -74,6 +77,21 @@ static int32_t rand_in(int32_t lo, int32_t hi) {
   return lo + (rand() % (hi - lo + 1));
 }
 
+/* Integer square root via Newton's method. For our range
+ * (dist_sq up to ~90,000), converges in <10 iterations. Used instead of
+ * sqrtf so we don't depend on FPU behaviour — early crashes on Emery
+ * were consistent with float math going wrong in this hot path. */
+static int32_t isqrt32(uint32_t n) {
+  if (n == 0) return 0;
+  uint32_t x = n;
+  uint32_t y = (x + 1u) >> 1;
+  while (y < x) {
+    x = y;
+    y = (x + n / x) >> 1;
+  }
+  return (int32_t)x;
+}
+
 /* Random non-zero throw velocity component: ±[VEL_MIN..VEL_MAX]. */
 static int32_t rand_throw_vel(void) {
   int32_t mag = rand_in(VEL_MIN, VEL_MAX);
@@ -118,6 +136,9 @@ static void integrate_and_walls(Body *b) {
 }
 
 static void resolve_die_die(Body *a, Body *b) {
+  /* All math in fixed-point. Positions and velocities live in POS_SCALE
+   * (256×) units already; the normal vector is also scaled by 256
+   * (so `nx_fp = 256` represents nx = 1.0). */
   int32_t ax = a->pos_x / POS_SCALE;
   int32_t ay = a->pos_y / POS_SCALE;
   int32_t bx = b->pos_x / POS_SCALE;
@@ -128,38 +149,46 @@ static void resolve_die_die(Body *a, Body *b) {
   int32_t dist_sq = dx * dx + dy * dy;
   if (dist_sq >= r_sum * r_sum || dist_sq == 0) return;
 
-  /* Normalize via float sqrt — Pebble Time 2 has FP, and three pairs
-   * per frame is negligible cost. */
-  float dist = sqrtf((float)dist_sq);
-  if (dist < 1.0f) dist = 1.0f;
-  float inv_dist = 1.0f / dist;
-  float nx = dx * inv_dist;
-  float ny = dy * inv_dist;
+  int32_t dist = isqrt32((uint32_t)dist_sq);
+  if (dist < 1) dist = 1;
 
-  /* Push apart so they're not overlapping next frame — half the overlap
-   * to each body, in 256× units. */
-  float overlap = (float)r_sum - dist;
-  int32_t push_x = (int32_t)(nx * overlap * (POS_SCALE / 2));
-  int32_t push_y = (int32_t)(ny * overlap * (POS_SCALE / 2));
+  /* Scaled normal: nx_fp = (dx / dist) * 256, range [-256, 256]. */
+  int32_t nx_fp = (dx * 256) / dist;
+  int32_t ny_fp = (dy * 256) / dist;
+
+  /* Push apart by half the overlap each, along the normal.
+   *   push_px       = (overlap / 2) * n_hat
+   *   push_POS_SCALE = push_px * POS_SCALE
+   *                  = (overlap / 2) * (nx_fp / 256) * 256
+   *                  = (overlap * nx_fp) / 2
+   * (POS_SCALE happens to be 256 too, so the math reduces cleanly.) */
+  int32_t overlap = r_sum - dist;
+  int32_t push_x = (overlap * nx_fp) / 2;
+  int32_t push_y = (overlap * ny_fp) / 2;
   a->pos_x -= push_x;
   a->pos_y -= push_y;
   b->pos_x += push_x;
   b->pos_y += push_y;
 
-  /* Exchange the normal component of velocity (equal mass, elastic).
-   * Tangential component is preserved. */
-  float avn = a->vx * nx + a->vy * ny;
-  float bvn = b->vx * nx + b->vy * ny;
-  if (bvn - avn >= 0) return;  /* already separating */
+  /* Relative velocity projected onto the normal:
+   *   vn = (b.v - a.v) · n_hat
+   * In fixed-point: vn_POS_SCALE = (dv_POS_SCALE * n_hat)
+   *                              = (dvx * nx_fp + dvy * ny_fp) / 256
+   * vn < 0 means the bodies are approaching; vn ≥ 0 means separating. */
+  int32_t dvx = b->vx - a->vx;
+  int32_t dvy = b->vy - a->vy;
+  int32_t vn = (dvx * nx_fp + dvy * ny_fp) / 256;
+  if (vn >= 0) return;
 
-  int32_t da = (int32_t)((bvn - avn) * nx);
-  int32_t db = (int32_t)((avn - bvn) * nx);
-  a->vx += da;
-  b->vx += db;
-  da = (int32_t)((bvn - avn) * ny);
-  db = (int32_t)((avn - bvn) * ny);
-  a->vy += da;
-  b->vy += db;
+  /* Equal-mass elastic exchange of normal components: a's vn changes
+   * by +vn (gaining b's old normal component), b's by -vn. Tangential
+   * component is unchanged. */
+  int32_t impulse_x = (vn * nx_fp) / 256;
+  int32_t impulse_y = (vn * ny_fp) / 256;
+  a->vx += impulse_x;
+  a->vy += impulse_y;
+  b->vx -= impulse_x;
+  b->vy -= impulse_y;
 }
 
 static void lerp_toward_home(Body *b) {
