@@ -111,9 +111,29 @@ static void debug_roll_fire(void *context) {
 
 static void bg_update(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
+
+  /* Three-band "aged parchment" vignette: dark wear frame → warm tan
+   * body → pale cream centre highlight. Costs three filled rects per
+   * redraw and zero bitmap memory. Most of the inner zones are
+   * covered by the dice tray and widgets; the gradient mainly shows
+   * in interstitial areas (between heart and torch in the stat row,
+   * around the journey-strip elements, at screen corners where the
+   * banner's tapered shape doesn't reach). */
+  graphics_context_set_fill_color(ctx,
+    PBL_IF_COLOR_ELSE(GColorWindsorTan, GColorBlack));
+  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+
   graphics_context_set_fill_color(ctx,
     PBL_IF_COLOR_ELSE(GColorRajah, GColorWhite));
-  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+  graphics_fill_rect(ctx,
+    GRect(2, 2, bounds.size.w - 4, bounds.size.h - 4),
+    3, GCornersAll);
+
+  graphics_context_set_fill_color(ctx,
+    PBL_IF_COLOR_ELSE(GColorPastelYellow, GColorWhite));
+  graphics_fill_rect(ctx,
+    GRect(8, 8, bounds.size.w - 16, bounds.size.h - 16),
+    5, GCornersAll);
 }
 
 static void dice_stage_update(Layer *layer, GContext *ctx) {

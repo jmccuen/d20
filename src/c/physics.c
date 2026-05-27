@@ -185,10 +185,20 @@ static void lerp_toward_home(Body *b) {
 
 /* --- Animation hooks --------------------------------------------------- */
 
-static void anim_setup(Animation *anim) { (void)anim; }
+static void anim_setup(Animation *anim) {
+  (void)anim;
+  APP_LOG(APP_LOG_LEVEL_INFO, "physics anim_setup");
+}
+
+static int s_update_count = 0;
 
 static void anim_update(Animation *anim, AnimationProgress p) {
   (void)anim;
+  if (s_update_count < 3) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "physics anim_update #%d, p=%ld",
+            s_update_count, (long)p);
+    s_update_count++;
+  }
   int32_t pct = (int32_t)p * 100 / ANIMATION_NORMALIZED_MAX;
 
   for (int i = 0; i < MAX_BODIES; i++) {
@@ -203,6 +213,8 @@ static void anim_update(Animation *anim, AnimationProgress p) {
   }
 
   if (pct < RETURN_PHASE_PCT) {
+    if (s_update_count <= 3)
+      APP_LOG(APP_LOG_LEVEL_INFO, "physics about to resolve_die_die");
     for (int i = 0; i < MAX_BODIES; i++) {
       for (int j = i + 1; j < MAX_BODIES; j++) {
         if (s_bodies[i].die && s_bodies[j].die) {
@@ -210,6 +222,8 @@ static void anim_update(Animation *anim, AnimationProgress p) {
         }
       }
     }
+    if (s_update_count <= 3)
+      APP_LOG(APP_LOG_LEVEL_INFO, "physics resolve_die_die done");
   }
 
   /* Push integrated state back to the Die structs. */
@@ -225,6 +239,9 @@ static void anim_update(Animation *anim, AnimationProgress p) {
 
 static void anim_teardown(Animation *anim) {
   (void)anim;
+  APP_LOG(APP_LOG_LEVEL_INFO, "physics anim_teardown: heap %u free",
+          (unsigned)heap_bytes_free());
+  s_update_count = 0;
   /* Snap to exact rest pose so the static face has clean values to display. */
   for (int i = 0; i < MAX_BODIES; i++) {
     Body *b = &s_bodies[i];
@@ -318,12 +335,19 @@ void physics_throw(int16_t hour_value, int16_t tens_value, int16_t ones_value) {
   }
 
   Animation *anim = animation_create();
+  APP_LOG(APP_LOG_LEVEL_INFO, "physics_throw: anim=%p heap %u free",
+          anim, (unsigned)heap_bytes_free());
+  if (!anim) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "physics_throw: animation_create returned NULL");
+    return;
+  }
   animation_set_implementation(anim, &s_impl);
   animation_set_handlers(anim, (AnimationHandlers){ .started = NULL, .stopped = NULL }, NULL);
   animation_set_duration(anim, PHYSICS_DURATION_MS);
   animation_set_curve(anim, AnimationCurveLinear);
   s_anim = anim;
   animation_schedule(anim);
+  APP_LOG(APP_LOG_LEVEL_INFO, "physics_throw: scheduled");
 }
 
 bool physics_is_active(void) {
