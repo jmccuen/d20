@@ -172,19 +172,19 @@ void face_init(Window *window) {
 
   s_hour_die = (Die){
     .center = GPoint(65, 60),
-    .radius = 40,
+    .radius = 42,
     .value  = 12,
     .type   = DIE_HOUR,
   };
   s_tens_die = (Die){
     .center = GPoint(138, 42),
-    .radius = 22,
+    .radius = 24,
     .value  = 0,
     .type   = DIE_TENS,
   };
   s_ones_die = (Die){
     .center = GPoint(158, 88),
-    .radius = 22,
+    .radius = 24,
     .value  = 0,
     .type   = DIE_ONES,
   };
