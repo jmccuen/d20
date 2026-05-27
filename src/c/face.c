@@ -162,11 +162,14 @@ void face_init(Window *window) {
    *   198 – 228  journey strip  (30 px)
    * Sections butt up against each other without overlap. */
 
-  /* Parchment background — added first so it sits below every widget. */
+  /* Parchment background — added first so it sits below every widget.
+   * Source is fully opaque, so GCompOpAssign is the right (and faster)
+   * blend mode — every pixel is copied straight. The banner above is
+   * the one with alpha; it composes over this layer at draw time. */
   s_bg_bitmap = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_PARCHMENT_BG);
   s_bg_layer  = bitmap_layer_create(bounds);
   bitmap_layer_set_bitmap(s_bg_layer, s_bg_bitmap);
-  bitmap_layer_set_compositing_mode(s_bg_layer, GCompOpSet);
+  bitmap_layer_set_compositing_mode(s_bg_layer, GCompOpAssign);
   layer_add_child(root, bitmap_layer_get_layer(s_bg_layer));
 
   /* Date ribbon along the top. */

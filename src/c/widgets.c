@@ -1,18 +1,12 @@
 /*
- * widgets.c — ribbon (banner + date + familiar) and stat row (heart +
- * torch + battery %). Phase 4a / 4b wire-up.
+ * widgets.c — ribbon (banner + feather + date + familiar) and stat row
+ * (heart + torch sprite + battery %).
  *
- * Bitmap ownership lives here: widgets_init loads the banner, feather
- * icon, and torch atlas once; widgets_deinit releases them. The draw
+ * Bitmap ownership lives here: widgets_init loads the banner, feather,
+ * and torch atlas once; widgets_deinit releases them. The draw
  * functions are stateless beyond reading from those module-scope
- * pointers.
- *
- * The heart is still procedural (Phase 4 deferred); the familiar is
- * still the placeholder circle + eye (Phase 5 swaps to selectable
- * creature silhouettes); battery state variation on the torch is also
- * deferred — the 8-frame atlas is animation frames of one flame, not
- * different battery states, so we draw a single static frame and let
- * the percent number under it carry the battery info.
+ * pointers. The heart and the familiar stay procedural — they look
+ * right at this size and don't yet have art.
  */
 
 #include "widgets.h"
@@ -24,27 +18,40 @@
 
 /* --- Bitmap resources --------------------------------------------------- */
 
+/* Torch atlas is 128×32 — 4 frames of 32×32 laid out left-to-right:
+ * full / half / embers / dark. Frame index maps directly to battery
+ * state via torch_state_for(pct). */
+#define TORCH_FRAME_W   32
+#define TORCH_FRAME_H   32
+#define TORCH_N_FRAMES  4
+
 static GBitmap *s_banner;
 static GBitmap *s_feather;
 static GBitmap *s_torch_sheet;
-static GBitmap *s_torch_frame;  /* sub-bitmap of s_torch_sheet */
+static GBitmap *s_torch_frames[TORCH_N_FRAMES];
 
 void widgets_init(void) {
   s_banner      = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_TOP_BANNER);
   s_feather     = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_FEATHER);
   s_torch_sheet = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_TORCH_SHEET);
-  /* 8 frames of 32×32 across; for now hold one static frame. Replace
-   * with cycling-frame logic if/when we want the torch to flicker, or
-   * with per-battery-state frame selection if/when the atlas grows
-   * different flame sizes. */
   if (s_torch_sheet) {
-    s_torch_frame = gbitmap_create_as_sub_bitmap(s_torch_sheet,
-                                                 GRect(0, 0, 32, 32));
+    for (int i = 0; i < TORCH_N_FRAMES; i++) {
+      s_torch_frames[i] = gbitmap_create_as_sub_bitmap(
+        s_torch_sheet,
+        GRect(i * TORCH_FRAME_W, 0, TORCH_FRAME_W, TORCH_FRAME_H));
+    }
   }
 }
 
 void widgets_deinit(void) {
-  if (s_torch_frame) { gbitmap_destroy(s_torch_frame); s_torch_frame = NULL; }
+  /* Sub-bitmaps share data with their parent atlas — destroy them
+   * BEFORE the parent. */
+  for (int i = 0; i < TORCH_N_FRAMES; i++) {
+    if (s_torch_frames[i]) {
+      gbitmap_destroy(s_torch_frames[i]);
+      s_torch_frames[i] = NULL;
+    }
+  }
   if (s_torch_sheet) { gbitmap_destroy(s_torch_sheet); s_torch_sheet = NULL; }
   if (s_feather)     { gbitmap_destroy(s_feather);     s_feather     = NULL; }
   if (s_banner)      { gbitmap_destroy(s_banner);      s_banner      = NULL; }
@@ -132,6 +139,24 @@ static void draw_bpm_inside(GContext *ctx, GPoint c, int16_t hr) {
     GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
+/* --- Torch state -------------------------------------------------------- */
+
+/* Atlas frame indices, in the same order the artwork lays them out:
+ * full / half / embers / dark. */
+typedef enum {
+  TORCH_FULL   = 0,
+  TORCH_HALF   = 1,
+  TORCH_EMBERS = 2,
+  TORCH_DARK   = 3,
+} TorchState;
+
+static TorchState torch_state_for(uint8_t pct) {
+  if (pct >= 40) return TORCH_FULL;
+  if (pct >= 20) return TORCH_HALF;
+  if (pct >=  5) return TORCH_EMBERS;
+  return TORCH_DARK;
+}
+
 /* --- Composite stat row ------------------------------------------------- */
 
 void widgets_draw_stats(GContext *ctx, GRect b,
@@ -142,14 +167,17 @@ void widgets_draw_stats(GContext *ctx, GRect b,
   draw_heart_body(ctx, heart_c);
   draw_bpm_inside(ctx, heart_c, hr);
 
-  /* Torch sprite on the right. The 32×32 frame's flame is at the top
-   * of the frame and the bottom is transparent — the percent label
-   * draws in that lower region (over the transparent area). */
-  if (s_torch_frame) {
-    GRect torch_rect = GRect(b.origin.x + b.size.w - 46, b.origin.y,
-                             32, 32);
+  /* Torch on the right. The 32×32 sprite frame holds the flame in its
+   * upper region and is transparent below — the percent label sits in
+   * that lower transparent area so the two stack visually. Sprite is
+   * pinned to the right edge with a 4-px breathing margin. */
+  TorchState state = torch_state_for(pct);
+  if (s_torch_frames[state]) {
+    GRect torch_rect = GRect(b.origin.x + b.size.w - 36,
+                             b.origin.y,
+                             TORCH_FRAME_W, TORCH_FRAME_H);
     graphics_context_set_compositing_mode(ctx, GCompOpSet);
-    graphics_draw_bitmap_in_rect(ctx, s_torch_frame, torch_rect);
+    graphics_draw_bitmap_in_rect(ctx, s_torch_frames[state], torch_rect);
   }
 
   char pct_buf[8];
@@ -157,6 +185,8 @@ void widgets_draw_stats(GContext *ctx, GRect b,
   graphics_context_set_text_color(ctx, COLOR_INK);
   graphics_draw_text(ctx, pct_buf,
     fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
-    GRect(b.origin.x + b.size.w - 50, b.origin.y + 18, 40, 14),
+    GRect(b.origin.x + b.size.w - 40,
+          b.origin.y + 17,
+          32, 14),
     GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }

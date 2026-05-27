@@ -194,36 +194,52 @@ Source folder is `resources/` (already populated for the first few items).
 Heart and dice are deliberately deferred — both look right procedurally.
 
 **4a — Parchment background + ribbon** (pipeline tracer)
-- [ ] Add `BG_PARCHMENT` (200 × 228) and `RIBBON_PARCHMENT` (~200 × 28)
-      to `package.json` resources
-- [ ] Crop/scale `resources/parchment/Worn-Parchment-BG-1.png` and
-      `Parchment-Roll.png` to target dimensions
-- [ ] Draw bg under the window in `face_init` (replacing
-      `window_set_background_color`)
-- [ ] Draw ribbon in `widgets_draw_ribbon` (replacing the tapered-scroll
-      polygon); keep procedural fallback wrapped behind a `#define` for
-      memory-tight builds
-- [ ] Verify resource bundle size + runtime memory
+- [x] Add resources to `package.json`: `IMAGE_PARCHMENT_BG` (200 × 228),
+      `IMAGE_TOP_BANNER` (200 × 28), `IMAGE_FEATHER` (20 × 20)
+- [x] Draw bg under the window in `face_init` via a `BitmapLayer`
+      added first so it sits below every widget
+- [x] Draw banner + feather quill + (still-procedural) familiar in
+      `widgets_draw_ribbon`, replacing the tapered-scroll polygon
+- [ ] Verify resource bundle size + runtime memory (do in emulator)
 
 **4b — Torch sprite atlas**
-- [ ] Add `torches.png` as a single resource; pick one color column
-      (default yellow/orange for Parchment theme)
-- [ ] In `widgets.c`, replace the polygon torch with a `gbitmap_create_as_sub_bitmap`
-      lookup keyed by battery bucket (full / half / embers / dark wick)
-- [ ] Leave handle as procedural or include in atlas — decide by eye
+- [x] New `torch.png` is 128 × 32 — 4 frames of 32 × 32 in the order
+      full / half / embers / dark.
+- [x] `widgets_init` loads the atlas + creates 4 sub-bitmaps;
+      `widgets_draw_stats` picks the right sub-bitmap via
+      `torch_state_for(pct)`.
+- [x] Percent label sits in the bottom transparent region of the
+      32 × 32 frame so the torch + % read as a vertical stack inside
+      the 32-px stat row.
+- [ ] If the text-vs-sprite alignment still reads off, options are
+      (a) tighter sub-bitmap of just the top of each frame + dedicated
+      text region below, (b) reposition the % to the left of the
+      torch, or (c) crop the source torches so they don't drift
+      between frames.
 
 **4c — Mage on the journey token**
-- [ ] Add idle frames (2) and walk frames (6) as separate `bitmap`
-      resources, named `MAGE_IDLE_1..2`, `MAGE_WALK_1..6`
-- [ ] In `journey.c`, drive frame selection from the slide animation: walk
-      cycle while the token is moving (during `journey_set_steps` slide),
-      idle cycle when stationary at camp; hold idle frame elsewhere
-- [ ] Token base circle stays procedural; the mage sprite renders on top
+- [x] Added `MAGE_IDLE_1..2`, `MAGE_WALK_1..3` as separate bitmap
+      resources
+- [x] `journey.c` extended init/deinit to load/release the frames;
+      `slide_update` writes `s_j.walk_frame_idx` (0..2) from animation
+      progress; `draw_token` picks `mage_walk_*` while a slide is in
+      flight, `mage_idle_1` otherwise
+- [x] Procedural token circle removed (mage sprite replaces it entirely)
+- [ ] Idle-cycle animation (alternating idle_1 / idle_2 on a slow timer)
+      deferred — single idle frame for now
+- [ ] Sprite orientation: idle/walk frames may face left while the
+      trail runs left→right; verify in emulator and flip-x if needed
 
 **4d — Campfire**
-- [ ] Asset still needs sourcing (not in `resources/` yet). Two states:
-      idle tent (~14 × 14) and lit (~14 × 18, tent + flame).
-- [ ] Once sourced, wire into `journey.c` trailhead drawing
+- [x] `camp.png` (32 × 32) sourced and wired into `journey.c`. Drawn
+      via `draw_camp` at the trailhead, centered on the trail midline.
+      Layer clipping handles the 1-px overhang above/below the strip.
+- [ ] Single-state for now — campfire is always lit in the art. If we
+      want the brief's idle-tent-vs-lit-fire distinction back, add a
+      second sprite and switch on `s_j.sleeping`.
+- [ ] Mage occludes the campfire when at the trailhead (steps = 0 or
+      sleeping). If that reads wrong, offset the mage a few px from
+      the campfire when at-camp.
 
 **4e — Deferred / probably skip**
 - Heart sprite: procedural heart reads fine; defer to "Phase 4 polish".

@@ -24,10 +24,8 @@
 
 #define COLOR_TRAIL    PBL_IF_COLOR_ELSE(GColorWindsorTan,       GColorDarkGray)
 #define COLOR_INK      GColorBlack
-#define COLOR_TENT     PBL_IF_COLOR_ELSE(GColorBulgarianRose,    GColorDarkGray)
 #define COLOR_TREASURE PBL_IF_COLOR_ELSE(GColorChromeYellow,     GColorWhite)
 #define COLOR_BOSS     PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorDarkGray)
-#define COLOR_FLAME    PBL_IF_COLOR_ELSE(GColorOrange,           GColorWhite)
 #define COLOR_LABEL    PBL_IF_COLOR_ELSE(GColorBulgarianRose,    GColorDarkGray)
 
 #define TRAIL_MAX             10000  /* fixed-point denominator for token_p_* */
@@ -57,13 +55,14 @@ static struct {
   time_t    sleep_ended_at;
 } s_j;
 
-/* Mage sprite frames. Loaded once in journey_init, released in
- * journey_deinit. */
+/* Mage sprite frames + campfire sprite. Loaded once in journey_init,
+ * released in journey_deinit. */
 static GBitmap *s_mage_idle_1;
 static GBitmap *s_mage_idle_2;  /* reserved for future idle cycle */
 static GBitmap *s_mage_walk_1;
 static GBitmap *s_mage_walk_2;
 static GBitmap *s_mage_walk_3;
+static GBitmap *s_camp;
 
 /* --- Slide animation ---------------------------------------------------- */
 
@@ -163,6 +162,7 @@ void journey_init(Layer *layer, int32_t step_goal) {
   s_mage_walk_1 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_WALK_1);
   s_mage_walk_2 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_WALK_2);
   s_mage_walk_3 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MAGE_WALK_3);
+  s_camp        = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_CAMP);
 }
 
 void journey_deinit(void) {
@@ -171,6 +171,7 @@ void journey_deinit(void) {
     s_j.slide_anim = NULL;
   }
   s_j.layer = NULL;
+  if (s_camp)        { gbitmap_destroy(s_camp);        s_camp        = NULL; }
   if (s_mage_walk_3) { gbitmap_destroy(s_mage_walk_3); s_mage_walk_3 = NULL; }
   if (s_mage_walk_2) { gbitmap_destroy(s_mage_walk_2); s_mage_walk_2 = NULL; }
   if (s_mage_walk_1) { gbitmap_destroy(s_mage_walk_1); s_mage_walk_1 = NULL; }
@@ -209,23 +210,16 @@ void journey_set_sleeping(bool sleeping) {
 /* --- Drawing primitives ------------------------------------------------- */
 
 static void draw_camp(GContext *ctx, GPoint at, bool sleeping) {
-  GPoint tent[3] = {
-    { at.x - 6, at.y + 4 },
-    { at.x,     at.y - 7 },
-    { at.x + 6, at.y + 4 },
-  };
-  GPathInfo info = { 3, tent };
-  GPath *p = gpath_create(&info);
-  graphics_context_set_fill_color(ctx, COLOR_TENT);
-  gpath_draw_filled(ctx, p);
-  graphics_context_set_stroke_color(ctx, COLOR_INK);
-  gpath_draw_outline(ctx, p);
-  gpath_destroy(p);
-
-  if (sleeping) {
-    graphics_context_set_fill_color(ctx, COLOR_FLAME);
-    graphics_fill_circle(ctx, GPoint(at.x + 9, at.y + 1), 2);
-  }
+  /* Camp sprite is 32×32 with the campfire centered. Layer clipping
+   * trims the 1-px slivers that fall outside the 30-px journey strip.
+   * sleeping is unused for the moment — the campfire is always lit in
+   * the source art; a separate "idle tent / no flame" variant can come
+   * later if we want the distinction. */
+  (void)sleeping;
+  if (!s_camp) return;
+  GRect dest = GRect(at.x - 16, at.y - 16, 32, 32);
+  graphics_context_set_compositing_mode(ctx, GCompOpSet);
+  graphics_draw_bitmap_in_rect(ctx, s_camp, dest);
 }
 
 static void draw_chest(GContext *ctx, GPoint at) {
