@@ -55,9 +55,12 @@ typedef struct {
 
 static FaceState s_state;
 
-/* Dice tray placeholder colors. Polygon stand-in until a sprite lands. */
-#define COLOR_TRAY_FRAME PBL_IF_COLOR_ELSE(GColorWindsorTan,    GColorWhite)
-#define COLOR_TRAY_FELT  PBL_IF_COLOR_ELSE(GColorBulgarianRose, GColorBlack)
+/* Dice tray placeholder colors. Polygon stand-in until a sprite lands.
+ * Felt is #16434a — a deep teal that contrasts with the warm dice
+ * shading better than the previous bulgarian-rose; Pebble's 64-color
+ * palette quantizes it to GColorMidnightGreen. */
+#define COLOR_TRAY_FRAME PBL_IF_COLOR_ELSE(GColorWindsorTan,     GColorWhite)
+#define COLOR_TRAY_FELT  PBL_IF_COLOR_ELSE(GColorMidnightGreen,  GColorBlack)
 
 static Layer       *s_ribbon_layer;
 static Layer       *s_dice_layer;

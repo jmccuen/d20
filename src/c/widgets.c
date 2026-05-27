@@ -81,7 +81,7 @@ void widgets_draw_ribbon(GContext *ctx, GRect b,
   /* Bluetooth familiar on the LEFT, lower + inward from the previous
    * placement. Connected: solid outline + eye dot. Disconnected: faded
    * outline. Phase 5 swaps to selectable creature silhouettes. */
-  GPoint fam = GPoint(b.origin.x + 22, b.origin.y + b.size.h / 2 + 2);
+  GPoint fam = GPoint(b.origin.x + 27, b.origin.y + b.size.h / 2 + 2);
   if (bt) {
     graphics_context_set_stroke_color(ctx, COLOR_INK);
     graphics_context_set_stroke_width(ctx, 1);
@@ -98,8 +98,8 @@ void widgets_draw_ribbon(GContext *ctx, GRect b,
   if (s_feather) {
     graphics_context_set_compositing_mode(ctx, GCompOpSet);
     graphics_draw_bitmap_in_rect(ctx, s_feather,
-      GRect(b.origin.x + b.size.w - 36,
-            b.origin.y + (b.size.h - 20) / 2 + 1,
+      GRect(b.origin.x + b.size.w - 40,
+            b.origin.y + (b.size.h - 20) / 2 + 4,
             20, 20));
   }
 
@@ -183,13 +183,10 @@ void widgets_draw_torch(GContext *ctx, GPoint at, uint8_t pct) {
   graphics_context_set_compositing_mode(ctx, GCompOpSet);
   graphics_draw_bitmap_in_rect(ctx, s_torch_frames[state], rect);
 
-  /* Battery % rendered inside the flame at the top of the sprite.
-   * White reads cleanly against the warm flame colours; at very low
-   * battery the flame is mostly empty so the number falls onto the
-   * parchment background — still legible. */
+  /* Battery % rendered inside the flame at the top of the sprite. */
   char pct_buf[8];
   snprintf(pct_buf, sizeof(pct_buf), "%d", pct);
-  graphics_context_set_text_color(ctx, GColorWhite);
+  graphics_context_set_text_color(ctx, GColorBlack);
   graphics_draw_text(ctx, pct_buf,
     fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
     GRect(at.x - 16, at.y - 22, 32, 22),

@@ -24,7 +24,7 @@
 
 #define COLOR_TRAIL    PBL_IF_COLOR_ELSE(GColorWindsorTan,       GColorDarkGray)
 #define COLOR_INK      GColorBlack
-#define COLOR_LABEL    PBL_IF_COLOR_ELSE(GColorBulgarianRose,    GColorDarkGray)
+#define COLOR_LABEL    GColorBlack
 
 #define TRAIL_MAX             10000  /* fixed-point denominator for token_p_* */
 #define SLIDE_STEP_MS         600    /* step-update tween */
@@ -297,23 +297,23 @@ static void draw_camp(GContext *ctx) {
     GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
-static void draw_cloud_and_temp(GContext *ctx,
+static void draw_cloud_and_temp(GContext *ctx, GRect bounds,
                                 int16_t temp, bool is_f) {
   if (!s_cloud) return;
-  /* Cloud centred horizontally on the trail midpoint, sitting near
-   * the top of the info area. */
-  int16_t cx = (TRAIL_X_START + TRAIL_X_END) / 2;
+  /* Cloud centred horizontally on the screen (not the trail) so it
+   * reads as a separate weather panel rather than another trail
+   * marker. */
+  int16_t cx = bounds.size.w / 2;
   int16_t cy = 12;
   graphics_context_set_compositing_mode(ctx, GCompOpSet);
   graphics_draw_bitmap_in_rect(ctx, s_cloud,
     GRect(cx - CLOUD_W / 2, cy - CLOUD_H / 2, CLOUD_W, CLOUD_H));
 
-  /* Temperature centred inside the cloud — single digit-then-degree
-   * form ("28°"). Unit (C/F) controlled by the caller via is_f; for
-   * now no in-cloud letter so it stays compact. */
-  (void)is_f;  /* unit selection deferred until settings ship */
+  /* Temperature centred inside the cloud — "28°". Unit selection
+   * (C/F) is deferred until settings ship. */
+  (void)is_f;
   char buf[8];
-  snprintf(buf, sizeof(buf), "%d\xc2\xb0", temp);  /* "28°" */
+  snprintf(buf, sizeof(buf), "%d\xc2\xb0", temp);
   graphics_context_set_text_color(ctx, COLOR_INK);
   graphics_draw_text(ctx, buf,
     fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
@@ -321,16 +321,38 @@ static void draw_cloud_and_temp(GContext *ctx,
     GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
-static void draw_step_count(GContext *ctx) {
-  /* Numeric step count centred below the trail. */
+static void draw_step_count(GContext *ctx, GRect bounds) {
+  /* Numeric step count centred horizontally on the screen, sitting
+   * just below the trail's vertical midline. */
   char buf[8];
   format_steps(s_j.steps, buf, sizeof(buf));
-  int16_t cx = (TRAIL_X_START + TRAIL_X_END) / 2;
+  int16_t cx = bounds.size.w / 2;
   graphics_context_set_text_color(ctx, COLOR_LABEL);
   graphics_draw_text(ctx, buf,
     fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD),
     GRect(cx - 24, TRAIL_MIDLINE + 12, 48, 14),
     GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+}
+
+static void draw_trail_end(GContext *ctx) {
+  /* Small triangular sigil at the end of the trail — the journey
+   * destination. Sits on the sine y so it reads as part of the path. */
+  int16_t tx = TRAIL_X_END;
+  int16_t ty = sine_y(tx);
+  GPoint tri[3] = {
+    { tx,     ty - 5 },
+    { tx + 4, ty + 3 },
+    { tx - 4, ty + 3 },
+  };
+  GPathInfo info = { 3, tri };
+  GPath *p = gpath_create(&info);
+  graphics_context_set_fill_color(ctx,
+    PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorDarkGray));
+  gpath_draw_filled(ctx, p);
+  graphics_context_set_stroke_color(ctx, COLOR_INK);
+  graphics_context_set_stroke_width(ctx, 1);
+  gpath_draw_outline(ctx, p);
+  gpath_destroy(p);
 }
 
 static void draw_mage(GContext *ctx, bool sleeping) {
@@ -383,11 +405,10 @@ static void draw_mage(GContext *ctx, bool sleeping) {
 
 void journey_draw(GContext *ctx, GRect bounds,
                   int16_t weather_temp, bool weather_is_f) {
-  (void)bounds;  /* drawing is positioned by TRAIL_* constants */
-
   draw_trail(ctx, s_j.sleeping);
+  draw_trail_end(ctx);
   draw_camp(ctx);
-  draw_cloud_and_temp(ctx, weather_temp, weather_is_f);
-  draw_step_count(ctx);
+  draw_cloud_and_temp(ctx, bounds, weather_temp, weather_is_f);
+  draw_step_count(ctx, bounds);
   draw_mage(ctx, s_j.sleeping);
 }

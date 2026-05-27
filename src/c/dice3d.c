@@ -49,13 +49,12 @@
 #define MAX_VERTS      20
 #define MAX_FACE_VERTS 5
 
-/* Numeral colors. Placeholders until the settings page lands — both the
- * resting color and the active-face highlight will be user-selectable
- * (along with the die body palette). For now: black on every face,
- * with the face whose label matches die->value tinted to make it read
- * as "this is the current time". */
+/* Numeral colors. Placeholder until the settings page lands — the
+ * dice ink will be user-selectable then. All faces use the same color
+ * now (the red active-face highlight was redundant once we hid the
+ * side-face glyphs at rest). */
 #define COLOR_NUMERAL          GColorBlack
-#define COLOR_NUMERAL_ACTIVE   PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorBlack)
+#define COLOR_NUMERAL_ACTIVE   GColorBlack
 
 typedef struct {
   int16_t x, y, z;
@@ -357,14 +356,16 @@ void dice3d_draw(GContext *ctx, const Die *die) {
    * mirrors how a real die looks under perspective — distant faces
    * appear with smaller-looking numerals — and lets the side glyphs
    * fit inside the foreshortened side-face polygons without the
-   * strict polygon cull. */
+   * strict polygon cull. Hour active uses GOTHIC_24_BOLD; the active
+   * face's box (28×24) sits inside the projected pentagon's inscribed
+   * circle (~21 px at r=42), so it never overflows at rest. */
   GFont   font_active = (die->type == DIE_HOUR)
-    ? fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD)
+    ? fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD)
     : fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
   GFont   font_side   = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
 
-  int16_t box_active_w = (die->type == DIE_HOUR) ? 22 : 10;
-  int16_t box_active_h = (die->type == DIE_HOUR) ? 16 : 12;
+  int16_t box_active_w = (die->type == DIE_HOUR) ? 28 : 12;
+  int16_t box_active_h = (die->type == DIE_HOUR) ? 24 : 14;
   int16_t box_side_w   = (die->type == DIE_HOUR) ? 12 :  8;
   int16_t box_side_h   = (die->type == DIE_HOUR) ? 11 : 10;
 
