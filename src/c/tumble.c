@@ -22,7 +22,7 @@
  * reads as "small dice land first, heavy one lands last." */
 #define DUR_FULL_HOUR_MS  1400
 #define DUR_FULL_MIN_MS    900
-#define DUR_QUICK_MS       800
+#define DUR_QUICK_MS       400
 #define DUR_SHAKE_MS       100
 
 /* FULL/QUICK now drive a 3D polyhedron via dice3d.c. The per-axis spin

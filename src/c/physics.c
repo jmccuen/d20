@@ -34,33 +34,29 @@
 #include "physics.h"
 #include <stdlib.h>
 
-#define PHYSICS_DURATION_MS  1500
+#define PHYSICS_DURATION_MS   800
 #define MAX_BODIES              3
 
 /* Position is stored as int32_t with the lower 8 bits as fractional pixels.
  * POS_SCALE is 1 px in that representation. */
 #define POS_SCALE  256
 
-/* Per-frame linear damping. v *= LIN_DAMP_N / 256. */
-#define LIN_DAMP_N  238  /* ≈ 0.93 */
+/* Per-frame linear damping. Tighter than the original (was 238) to
+ * settle in the shorter 800 ms duration. */
+#define LIN_DAMP_N  220  /* ≈ 0.86 */
 
-/* Per-frame angular damping for angular *velocity*. Rotation magnitude
- * has its own progressive decay (see SPRING_MAX_N comment). */
-#define ANG_DAMP_N  230  /* ≈ 0.90 */
+/* Per-frame angular damping for angular *velocity*. */
+#define ANG_DAMP_N  215  /* ≈ 0.84 */
 
-/* Spring strength toward home, scaled with progress. The actual per-frame
- * spring is `pct * SPRING_MAX_N / 100` so it grows linearly from 0 at the
- * start of the throw (free flight) to SPRING_MAX_N at the end. With
- * SPRING_MAX_N = 10 a body 100 px from home gets a ~4 px/frame velocity
- * change at p=1, which combined with damping pulls it all the way home
- * before the animation ends. */
-#define SPRING_MAX_N   10
+/* Spring strength toward home, scaled with progress (0 at start, max
+ * at end). Bumped from 10 → 18 alongside the duration drop so the
+ * dice still make it all the way home in fewer frames. */
+#define SPRING_MAX_N   18
 
-/* Rotation magnitude decay also scales with progress: each frame
- * `rot *= (256 - pct * ROT_DECAY_MAX_N / 100) / 256`. At p=0 there's no
- * decay (the polyhedron tumbles freely); by p=1 the rotation is shrinking
- * by ~20% per frame, so the leftover at teardown snaps invisibly. */
-#define ROT_DECAY_MAX_N 50
+/* Rotation magnitude decay scaling with progress: at p=0 no decay
+ * (free tumble), at p=100% rotation shrinks ~30%/frame so the
+ * teardown snap is invisible. */
+#define ROT_DECAY_MAX_N 80
 
 /* Throw velocity ranges. Stored in 256× units so 256 = 1 px/frame.
  * VEL_MIN guards against a die getting a near-zero initial velocity and
