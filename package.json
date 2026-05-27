@@ -1,12 +1,12 @@
 {
-  "name": "d20-watchface",
-  "author": "",
+  "name": "initiative",
+  "author": "Atemporal",
   "version": "0.1.0",
-  "keywords": ["TTRPG", "roleplaying", "fantasy", "RPG"],
+  "keywords": ["TTRPG", "roleplaying", "fantasy", "RPG", "Dice", "D20", "Critical Role", "D&D", "Dungeons & Dragons"],
   "private": true,
   "dependencies": {},
   "pebble": {
-    "displayName": "D20 Dice",
+    "displayName": "Initiative",
     "uuid": "72f69112-d354-4317-a734-617e4c48512f",
     "sdkVersion": "3",
     "enableMultiJS": true,

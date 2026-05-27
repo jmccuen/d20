@@ -351,6 +351,31 @@ def rest_rotation_for_face(verts: list[Vec3], face_indices: list[int]) -> tuple[
     return tx, ty
 
 
+def rad_to_trig(rad: float) -> int:
+    """Convert radians to Pebble TRIG_MAX_ANGLE units (65536 per full circle).
+    The result is wrapped into [-32768, 32767] which works with sin_lookup /
+    cos_lookup (they're periodic).
+    """
+    return int(round(rad / (2.0 * math.pi) * 65536)) & 0xFFFF
+
+
+def per_value_rotations(
+    verts: list[Vec3], faces: list[tuple[list[int], int]]
+) -> dict[int, tuple[float, float]]:
+    """Compute the (theta_x, theta_y) needed to bring each labeled face
+    onto +z. The values are stored keyed by face.value so the runtime can
+    look up `rest_rotation[die->value]` without an extra value→index map.
+
+    For a value whose face is already at +z (face 0, by construction in
+    the pre-rotated vertex table), the result is (0, 0).
+    """
+    result: dict[int, tuple[float, float]] = {}
+    for face_indices, value in faces:
+        tx, ty = rest_rotation_for_face(verts, face_indices)
+        result[value] = (tx, ty)
+    return result
+
+
 def apply_pre_rotation(verts: list[Vec3], tx: float, ty: float) -> list[Vec3]:
     return [ry(rx(v, tx), ty) for v in verts]
 
@@ -381,6 +406,24 @@ def emit_d10_faces(faces: list[tuple[list[int], int]]) -> str:
     for indices, value in faces:
         idx = ", ".join(f"{i:2d}" for i in indices)
         lines.append(f"  {{ {{ {idx} }}, 4, {value} }},")
+    lines.append("};")
+    return "\n".join(lines)
+
+
+def emit_rotation_table(
+    name: str,
+    rotations: dict[int, tuple[float, float]],
+    size: int,
+    axis: int,  # 0 = rx, 1 = ry
+) -> str:
+    axis_name = ("rx", "ry")[axis]
+    lines = [f"static const int32_t {name}[{size}] = {{"]
+    for v in range(size):
+        if v in rotations:
+            val = rad_to_trig(rotations[v][axis])
+            lines.append(f"  {val:7d}, /* [{v:2d}] {axis_name} */")
+        else:
+            lines.append(f"        0, /* [{v:2d}] unused (value not on this die) */")
     lines.append("};")
     return "\n".join(lines)
 
@@ -441,6 +484,21 @@ def main() -> None:
     print(emit_table("d10_verts", d10_q))
     print()
     print(emit_d10_faces(d10_faces))
+
+    print()
+    print("/* ---- Per-value rest rotations ---------------------------------- */")
+    print("/* Indexed by die->value. Rotation order is Rx then Ry (matching")
+    print(" * rotate_vertex), no rz component — the face-around-z orientation")
+    print(" * isn't enforced; each value lands at whatever orientation the")
+    print(" * shortest centroid-onto-z rotation produces. */")
+    d12_per = per_value_rotations(d12_rotated, d12_faces)
+    d10_per = per_value_rotations(d10_rotated, d10_faces)
+    # D12 values are 1..12, so we need a 13-entry table (slot 0 unused).
+    print(emit_rotation_table("d12_value_rx", d12_per, 13, axis=0))
+    print(emit_rotation_table("d12_value_ry", d12_per, 13, axis=1))
+    # D10 values are 0..9.
+    print(emit_rotation_table("d10_value_rx", d10_per, 10, axis=0))
+    print(emit_rotation_table("d10_value_ry", d10_per, 10, axis=1))
 
 
 if __name__ == "__main__":

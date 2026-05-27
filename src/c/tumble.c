@@ -57,17 +57,17 @@ static void tumble_update(Animation *anim, const AnimationProgress p) {
   Die *die = h->die;
 
   if (h->kind == TUMBLE_SHAKE) {
-    /* Damped sine wobble around the camera axis — the die has already
-     * landed on its new value and gives a small axial twist on settle.
-     * tumbling stays false so dice3d_draw paints the target value rather
-     * than whichever baked face the rotation happens to bring forward. */
+    /* Damped sine wobble around the camera axis. die->value was already
+     * snapped to target at tumble_start so the polyhedron is in the new
+     * rest pose and just wobbles in place from there. tumbling stays
+     * false so dice3d_draw uses the per-value rest rotation, not the
+     * tumble path. */
     int32_t remaining = ANIMATION_NORMALIZED_MAX - p;
     int32_t ampl  = (int64_t)SHAKE_AMPL * remaining / ANIMATION_NORMALIZED_MAX;
     int32_t phase = (int64_t)p * 4 * TRIG_MAX_ANGLE / ANIMATION_NORMALIZED_MAX;
     die->rot_x    = 0;
     die->rot_y    = 0;
     die->rot_z    = (int64_t)sin_lookup(phase) * ampl / TRIG_MAX_RATIO;
-    die->value    = h->target_value;
     die->tumbling = false;
     die->flash    = false;
   } else {
@@ -141,6 +141,16 @@ void tumble_start(TumbleHandle *h, TumbleKind kind,
   h->kind         = kind;
   h->target_value = target_value;
   h->last_segment = -1;
+
+  /* Snap die->value to the new target up-front so the per-value rest
+   * rotation in dice3d_draw uses the new pose from frame 0 of the
+   * animation. For FULL/QUICK the spin starts at zero and ramps up, so
+   * the orientation step from old rest pose to new is briefly visible —
+   * but it lands on the correct face, with every face's baked numeral
+   * visible during the spin (the polyhedron reads like a real die). For
+   * SHAKE the change is the point of the animation: the user sees the
+   * die flip to the new face then wobble in place. */
+  h->die->value = target_value;
 
   uint32_t dur;
   switch (kind) {
